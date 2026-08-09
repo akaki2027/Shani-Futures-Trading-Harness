@@ -93,7 +93,7 @@ def doctor() -> None:
         failures += 1
         console.print(f"{FAIL}  database — {exc}")
         console.print("        Delete the file to start fresh, or check permissions.")
-        db = None  # type: ignore[assignment]
+        db = None
 
     # Broker
     try:

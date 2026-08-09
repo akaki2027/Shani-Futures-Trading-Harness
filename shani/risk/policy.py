@@ -23,6 +23,7 @@ silently reset in the middle of it.
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -82,15 +83,19 @@ class RiskPolicy:
         """Approve or refuse an order, logging the decision either way."""
         now = at or datetime.now(UTC)
 
-        for check in (
-            lambda: self._kill_switch(),
+        # Evaluated in order, and the first refusal wins. Ordering is
+        # deliberate: the cheapest and most absolute checks come first, so a
+        # tripped kill switch never bothers to query the database.
+        checks: tuple[Callable[[], RiskDecision], ...] = (
+            self._kill_switch,
             lambda: self._daily_loss(now),
             lambda: self._rate_limit(now),
             lambda: self._position_size(order),
             lambda: self._open_positions(order, account),
             lambda: self._trade_risk(planned_risk),
             lambda: self._stop_required(order, has_stop),
-        ):
+        )
+        for check in checks:
             decision = check()
             if not decision.approved:
                 self.audit.warn(

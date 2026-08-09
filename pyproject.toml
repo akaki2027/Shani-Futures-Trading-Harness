@@ -145,7 +145,17 @@ ignore = [
 python_version = "3.11"
 strict = true
 warn_unreachable = true
-# Neither TradingView library ships type stubs.
+# Neither TradingView library ships type stubs, and the LLM SDKs are optional
+# extras — a fresh clone installs without them, so mypy must not require them to
+# be present in order to type-check the codebase.
 [[tool.mypy.overrides]]
-module = ["tradingview_screener.*", "tradingview_ta.*", "desktop_notifier.*"]
+module = [
+    "tradingview_screener.*",
+    "tradingview_ta.*",
+    "desktop_notifier.*",
+    "anthropic.*",
+    "openai.*",
+    "websockets.*",
+]
 ignore_missing_imports = true
+implicit_reexport = true

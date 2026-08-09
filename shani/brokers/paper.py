@@ -206,8 +206,6 @@ class PaperBroker:
             # exactly the real-world failure mode this order type has.
             return None
 
-        return None
-
     def _slipped(self, price: Decimal, side: Side, instrument: Instrument) -> Decimal:
         """Apply slippage in whichever direction hurts."""
         offset = instrument.tick_size * Decimal(self.slippage_ticks)
@@ -379,6 +377,9 @@ class PaperBroker:
         self.db.trades.save(trade)
 
     # ── queries ──────────────────────────────────────────────────────────────
+
+    def last_price(self, symbol: str) -> Decimal | None:
+        return self._last_price.get(symbol)
 
     def position(self, symbol: str) -> Position:
         existing = self.db.positions.where("symbol = ?", [symbol], limit=1)

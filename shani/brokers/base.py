@@ -18,7 +18,7 @@ from decimal import Decimal
 from typing import Protocol, runtime_checkable
 from uuid import UUID
 
-from shani.models import Fill, Order, Position
+from shani.models import Fill, Order, OrderType, Position, Side
 
 __all__ = [
     "AccountSnapshot",
@@ -88,13 +88,47 @@ class Broker(Protocol):
     name: str
     is_live: bool
 
-    def submit(self, order: Order) -> Order:
+    def submit(self, order: Order, *, at: datetime | None = None) -> Order:
         """Send an order. Returns it with venue state applied.
 
         Raises :class:`OrderRejectedError` when the order cannot be accepted.
         Implementations must reject rather than silently adjust — a quantity
         quietly clamped to fit margin is a bug that only surfaces as a
         confusing fill.
+
+        ``at`` is the moment the order is considered submitted. Live venues
+        ignore it; the simulator needs it, because it owns no clock.
+        """
+        ...
+
+    def submit_bracket(
+        self,
+        *,
+        symbol: str,
+        side: Side,
+        quantity: int,
+        stop_loss: Decimal,
+        take_profit: Decimal,
+        at: datetime,
+        entry_type: OrderType = OrderType.MARKET,
+        entry_price: Decimal | None = None,
+    ) -> tuple[Order, Order, Order]:
+        """Submit an entry with an attached protective stop and target.
+
+        Part of the protocol rather than a paper-broker extra, because the risk
+        gate requires a stop on every entry — so a venue that cannot express
+        "entry plus stop plus target" cannot be used for entries at all.
+
+        Returns ``(entry, stop, target)``. The two exits share an OCO group.
+        """
+        ...
+
+    def last_price(self, symbol: str) -> Decimal | None:
+        """Most recent price the venue has seen, if any.
+
+        Needed by callers computing planned risk before submitting. ``None``
+        means no price is known, and callers must not substitute a guess — a
+        risk figure derived from an invented price looks real and is not.
         """
         ...
 

@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: python ${{ matrix.python }} · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Shani is developed on Windows but must run anywhere. Trading sessions
+        # are timezone-sensitive and paths differ per platform, so a
+        # single-OS matrix would let real portability bugs through.
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ['3.11', '3.13']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --python ${{ matrix.python }}
+
+      - name: Lint
+        run: uv run ruff check shani tests
+
+      - name: Type check
+        run: uv run mypy shani
+
+      - name: Test
+        # Network and desktop markers are excluded by pyproject config, so CI
+        # never depends on live TradingView endpoints, on market hours, or on a
+        # running TradingView Desktop.
+        run: uv run pytest -q
+
+  portal:
+    name: portal
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: portal
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: portal/package-lock.json
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+
+  secrets:
+    name: secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # The journal database holds your P&L and your playbook. Unlike a leaked
+      # API key you cannot rotate an edge, so this runs on every push.
+      - name: Scan for committed secrets and journal data
+        run: |
+          if git ls-files | grep -E '\.(db|sqlite3?)$'; then
+            echo "::error::A database file is tracked. Journal data must never be committed."
+            exit 1
+          fi
+          if git ls-files | grep -E '^\.env$'; then
+            echo "::error::.env is tracked. Secrets must never be committed."
+            exit 1
+          fi
+          echo "No database or .env files tracked."

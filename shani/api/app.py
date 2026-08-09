@@ -234,7 +234,7 @@ def build_app(config: Config | None = None) -> FastAPI:
 
         planned_risk = None
         if body.stop_loss is not None:
-            reference = body.limit_price or broker._last_price.get(body.symbol)
+            reference = body.limit_price or broker.last_price(body.symbol)
             if reference is not None:
                 planned_risk = abs(
                     instrument.pnl(reference, body.stop_loss, body.quantity,

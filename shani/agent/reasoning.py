@@ -34,7 +34,7 @@ from typing import Any
 from shani.agent.llm import LLM, LLMError, fence
 from shani.audit import AuditLog, EventType
 from shani.db import Database
-from shani.instruments import get_instrument
+from shani.instruments import Instrument, get_instrument
 from shani.memory.playbook import Playbook, Recall, slugify
 from shani.models import (
     InterviewAnswer,
@@ -356,7 +356,7 @@ def _side(value: Any) -> Side | None:
     return None
 
 
-def _price(value: Any, instrument: Any) -> Decimal | None:
+def _price(value: Any, instrument: Instrument) -> Decimal | None:
     """Coerce a model-supplied price onto a valid tick.
 
     A model will confidently propose an ES stop at 4991.13. Snapping is right
@@ -366,9 +366,10 @@ def _price(value: Any, instrument: Any) -> Decimal | None:
     if value is None:
         return None
     try:
-        return instrument.round_to_tick(Decimal(str(value)))
-    except Exception:
+        rounded: Decimal = instrument.round_to_tick(Decimal(str(value)))
+    except (ArithmeticError, TypeError, ValueError):
         return None
+    return rounded
 
 
 def _confidence(value: Any) -> float:

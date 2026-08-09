@@ -1,0 +1,43 @@
+# Shani — API plus portal.
+#
+#   docker compose up --build
+#   → portal at http://127.0.0.1:3000
+#
+# Note: Plane B (TradingView Desktop) does not work from inside a container. Run
+# Shani natively if you want chart-context capture. Planes A and C work here.
+
+services:
+  api:
+    build: .
+    # Published to loopback only. Your journal and order entry have no business
+    # on the local network by accident.
+    ports:
+      - "127.0.0.1:8420:8420"
+    volumes:
+      - shani-data:/data
+    environment:
+      # Secrets come from .env, which is gitignored. Never inline them here.
+      SHANI_SERVER__API_TOKEN: ${SHANI_SERVER__API_TOKEN:-}
+      SHANI_TRADINGVIEW__WEBHOOK_SECRET: ${SHANI_TRADINGVIEW__WEBHOOK_SECRET:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      SHANI_SERVER__CORS_ORIGINS: '["http://localhost:3000"]'
+    restart: unless-stopped
+
+  portal:
+    image: node:22-alpine
+    working_dir: /app
+    command: sh -c "npm ci && npm run build && npm start"
+    volumes:
+      - ./portal:/app
+      - portal-modules:/app/node_modules
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      SHANI_API_URL: http://api:8420
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  shani-data:
+  portal-modules:
