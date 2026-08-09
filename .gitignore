@@ -1,0 +1,87 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# SECRETS AND PERSONAL TRADING DATA
+#
+# Read this section before adding anything to it.
+#
+# This repository is intended to be public. Two categories of file must never
+# reach it:
+#
+#   1. Credentials — API keys, broker tokens, the webhook HMAC secret.
+#   2. Your trading data — the Shani database holds your P&L, your positions,
+#      and your playbook. That playbook IS your edge, written down. Publishing
+#      it is worse than publishing a password, because you cannot rotate it.
+#
+# Default data locations live outside the repo (see shani/config.py, which uses
+# platformdirs), so the entries below are a second line of defence for anyone
+# who overrides the paths to somewhere local.
+# ─────────────────────────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets.yaml
+config.local.yaml
+
+# Databases and journal data
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+data/
+journal/
+playbook/
+
+# Chart screenshots captured at trade entry — these show your positions.
+screenshots/
+*.entry.png
+
+# Exported trade history
+exports/
+*.trades.csv
+
+# ─── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.venv/
+venv/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# ─── Node / portal ───────────────────────────────────────────────────────────
+node_modules/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+npm-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# ─── Editors and OS ──────────────────────────────────────────────────────────
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─── Tooling ─────────────────────────────────────────────────────────────────
+.impeccable/cache/
+.claude/settings.local.json

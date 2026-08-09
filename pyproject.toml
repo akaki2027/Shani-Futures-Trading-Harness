@@ -1,0 +1,133 @@
+[project]
+name = "shani"
+version = "0.1.0"
+description = "A self-learning trading harness for futures traders — journals what you trade, learns your setups, and surfaces them back when they matter."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11,<3.14"
+authors = [{ name = "Shani contributors" }]
+keywords = [
+    "trading", "futures", "tradingview", "trading-journal", "paper-trading",
+    "agent", "llm", "mcp", "ninjatrader", "backtesting",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
+
+dependencies = [
+    # --- web / API -----------------------------------------------------------
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "httpx>=0.27",
+    # Plane B talks raw Chrome DevTools Protocol, which is a WebSocket carrying
+    # JSON-RPC. No CDP client library needed — see shani/market/tradingview_cdp.py.
+    "websockets>=13.0",
+
+    # --- config / models -----------------------------------------------------
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "pyyaml>=6.0",
+    # Keeps data/config/cache out of the repo directory and in the correct
+    # per-OS location. Required for the repo to work off Windows.
+    "platformdirs>=4.3",
+
+    # --- CLI -----------------------------------------------------------------
+    "typer>=0.15",
+    "rich>=13.9",
+
+    # --- notifications -------------------------------------------------------
+    # Cross-platform desktop notifications (Windows toast / macOS / Linux).
+    # The post-trade interview is worthless if it doesn't reach you while the
+    # trade is still fresh.
+    "desktop-notifier>=6.0",
+
+    # --- Plane A: TradingView market data ------------------------------------
+    #
+    # PIN IS LOAD-BEARING — DO NOT RELAX TO A RANGE.
+    #
+    # Starting in 3.2.0, every bare `Query()` (and the `futures()` helper)
+    # injects a default *stock* preset: an `is_primary` filter plus an equity
+    # `type`/`typespecs` filter2. Against the futures scanner that preset matches
+    # nothing, so queries return zero rows *silently* — no error, no warning,
+    # just an empty watchlist and a screener that appears to work.
+    #
+    # Shani is a futures-first tool, so this would break the core product with
+    # no visible failure. If you ever lift this pin, you MUST clear the stock
+    # preset (drop `filter`/`filter2`) before querying futures.
+    # Credit: this failure mode was documented by atilaahmettaner/tradingview-mcp.
+    "tradingview-screener==3.0.0",
+    "tradingview-ta>=3.3.0",
+]
+
+[project.optional-dependencies]
+# LLM providers are optional so a fresh clone installs fast and works offline
+# against the paper broker without any API key. Install what you actually use:
+#   uv sync --extra anthropic
+anthropic = ["anthropic>=0.40"]
+openai = ["openai>=1.55"]
+all = ["anthropic>=0.40", "openai>=1.55"]
+
+[project.scripts]
+shani = "shani.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/YOUR_USERNAME/shani"
+Repository = "https://github.com/YOUR_USERNAME/shani"
+Issues = "https://github.com/YOUR_USERNAME/shani/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["shani"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "types-pyyaml>=6.0",
+    # Session/rollover logic is time-dependent; tests must not depend on when
+    # they happen to run.
+    "time-machine>=2.16",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+# Default runs stay hermetic. Tests that hit live TradingView endpoints or need
+# a running TradingView Desktop are opt-in only, so CI is deterministic and a
+# fresh clone can run the suite on a plane.
+addopts = "-m 'not network and not desktop' --strict-markers"
+markers = [
+    "network: hits live upstream market data (not run in CI)",
+    "desktop: requires TradingView Desktop with --remote-debugging-port (not run in CI)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "A", "C4", "SIM", "RUF"]
+ignore = [
+    "E501",   # line length is handled by the formatter
+]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+# Neither TradingView library ships type stubs.
+[[tool.mypy.overrides]]
+module = ["tradingview_screener.*", "tradingview_ta.*", "desktop_notifier.*"]
+ignore_missing_imports = true
