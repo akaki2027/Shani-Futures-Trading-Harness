@@ -71,15 +71,19 @@ dependencies = [
 #   uv sync --extra anthropic
 anthropic = ["anthropic>=0.40"]
 openai = ["openai>=1.55"]
+# OpenRouter speaks the OpenAI wire protocol, so it needs the same client. Named
+# as its own extra because `uv sync --extra openai` to reach OpenRouter is a
+# confusing thing to have to work out.
+openrouter = ["openai>=1.55"]
 all = ["anthropic>=0.40", "openai>=1.55"]
 
 [project.scripts]
 shani = "shani.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/YOUR_USERNAME/shani"
-Repository = "https://github.com/YOUR_USERNAME/shani"
-Issues = "https://github.com/YOUR_USERNAME/shani/issues"
+Homepage = "https://github.com/akaki2027/shani"
+Repository = "https://github.com/akaki2027/shani"
+Issues = "https://github.com/akaki2027/shani/issues"
 
 [build-system]
 requires = ["hatchling"]

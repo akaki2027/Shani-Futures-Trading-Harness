@@ -70,4 +70,4 @@ Stated explicitly rather than left to be discovered:
 - **Mobile companion.** The schema and API are shaped for it; the app is not
   built.
 
-[0.1.0]: https://github.com/YOUR_USERNAME/shani/releases/tag/v0.1.0
+[0.1.0]: https://github.com/akaki2027/shani/releases/tag/v0.1.0

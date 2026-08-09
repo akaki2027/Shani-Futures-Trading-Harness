@@ -5,7 +5,7 @@ Contributions welcome. Shani is alpha and there is plenty to do.
 ## Setup
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/shani.git
+git clone https://github.com/akaki2027/shani.git
 cd shani
 uv sync
 cp .env.example .env

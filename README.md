@@ -86,7 +86,7 @@ Shani is **alpha**. This table is the honest state of things — see
 | Trade journal + post-trade interview | ✅ Working |
 | Setup-card extraction and retrieval | ✅ Working |
 | Plane A — market data, screeners, TA | ✅ Working |
-| Plane B — TradingView Desktop bridge | ⚠️ Built, needs your Desktop app to verify |
+| Plane B — TradingView Desktop bridge | ✅ Verified against Desktop 3.3.0 |
 | Plane C — Pine alert webhooks | ⚠️ Built, needs a tunnel to verify end-to-end |
 | Portal — charts, ticket, stats | ✅ Working |
 | NinjaTrader execution | 📋 Documented stub, not implemented |
@@ -120,7 +120,7 @@ Full setup: **[docs/tradingview-setup.md](docs/tradingview-setup.md)**
 Requires **Python 3.11+** and **Node 20+**.
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/shani.git
+git clone https://github.com/akaki2027/shani.git
 cd shani
 uv sync
 uv run shani init

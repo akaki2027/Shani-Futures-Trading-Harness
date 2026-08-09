@@ -91,7 +91,25 @@ you close the window.
 
 ### 2. Relaunch with the debug port
 
-**Windows (PowerShell):**
+**Windows — Microsoft Store build (most common):**
+
+If you installed TradingView from the Microsoft Store, there is **no
+`TradingView.exe` under `%LOCALAPPDATA%\Programs\`.** The app is an MSIX package
+living in the ACL-protected `WindowsApps` folder under a path that contains its
+version number, and launching it through the Start menu gives you no way to pass
+a flag. This is the single most common reason this step appears to fail.
+
+Launch the packaged executable directly. Deriving the path from the package
+avoids hardcoding a version that changes on every update:
+
+```powershell
+$exe = Join-Path (Get-AppxPackage TradingView.Desktop).InstallLocation "TradingView.exe"
+Start-Process $exe -ArgumentList "--remote-debugging-port=9222"
+```
+
+Verified working on TradingView Desktop 3.3.0 (Store build).
+
+**Windows — standard installer:**
 
 ```powershell
 & "$env:LOCALAPPDATA\Programs\TradingView\TradingView.exe" --remote-debugging-port=9222
@@ -147,6 +165,31 @@ The debug port gives **full control of the TradingView application** to anything
 that can reach it. Keep `cdp_host` on `localhost`. Never expose port 9222 to a
 network or forward it through a tunnel. Close it when you are not using Shani by
 restarting TradingView without the flag.
+
+### Which global Shani talks to
+
+Worth knowing, because most published examples get this wrong.
+
+TradingView exposes **two different** chart APIs:
+
+| Global | Where it exists |
+|---|---|
+| `window.TradingViewApi` | tradingview.com and TradingView Desktop — **the real app** |
+| `window.tvWidget` | The embeddable Charting Library only. **Not** on tradingview.com |
+
+Guides that reach for `window.tvWidget` fail on every real Desktop install with
+"tvWidget not available", because Desktop loads tradingview.com. Shani checks
+`TradingViewApi` first and falls back to `tvWidget` for widget embeds, so both
+surfaces work.
+
+Confirmed live against Desktop 3.3.0: `TradingViewApi.activeChart()` returns
+`.symbol()`, `.resolution()`, and `.getAllStudies()` — including your own
+indicators by name.
+
+Note that Desktop exposes roughly a dozen page targets: the chart, symbol pages,
+the screener, and several internal `file://` shell windows for the title bar and
+tooltips. Shani matches the `/chart/` URL specifically, because a loose substring
+match lands on an internal window and produces a baffling "no chart API" error.
 
 ### When it breaks
 

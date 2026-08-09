@@ -20,7 +20,11 @@ from typing import Any, Literal
 import yaml
 from platformdirs import user_config_dir, user_data_dir
 from pydantic import BaseModel, Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
 
 __all__ = ["Config", "LiveTradingDisabledError", "load_config"]
 
@@ -159,6 +163,43 @@ class ServerConfig(BaseModel):
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
 
 
+#: Path the YAML settings source reads. Set by :func:`load_config` before
+#: constructing, because ``settings_customise_sources`` is a classmethod and has
+#: no other way to receive it.
+_yaml_path: Path | None = None
+
+
+class _YamlSettingsSource(PydanticBaseSettingsSource):
+    """Reads ``config.yaml`` as a *low priority* settings source.
+
+    This exists to fix a precedence bug rather than for elegance. The obvious
+    implementation — ``Config(**yaml_values)`` — passes the file's contents as
+    init keyword arguments, and in pydantic-settings init kwargs outrank
+    environment variables. The result is that every documented ``SHANI_*``
+    override is silently ignored for any key that also appears in the YAML, with
+    no error to indicate it.
+
+    Registering the file as its own source below env instead gives the
+    precedence the documentation actually promises:
+
+        init kwargs  >  environment  >  .env  >  config.yaml  >  defaults
+    """
+
+    def __init__(self, settings_cls: type[BaseSettings], path: Path | None) -> None:
+        super().__init__(settings_cls)
+        self._data: dict[str, Any] = {}
+        if path is not None and path.exists():
+            loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                self._data = loaded
+
+    def get_field_value(self, field: Any, field_name: str) -> tuple[Any, str, bool]:
+        return self._data.get(field_name), field_name, False
+
+    def __call__(self) -> dict[str, Any]:
+        return self._data
+
+
 class Config(BaseSettings):
     """Root configuration."""
 
@@ -168,6 +209,24 @@ class Config(BaseSettings):
         env_file=".env",
         extra="ignore",
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """Highest priority first. The YAML file sits below the environment."""
+        return (
+            init_settings,
+            env_settings,
+            dotenv_settings,
+            _YamlSettingsSource(settings_cls, _yaml_path),
+            file_secret_settings,
+        )
 
     data_dir: Path = DATA_DIR
     database_path: Path | None = None
@@ -212,15 +271,17 @@ class Config(BaseSettings):
 def load_config(path: Path | None = None) -> Config:
     """Load configuration from YAML plus environment.
 
-    Environment variables win, so a secret can be injected without touching the
-    file — ``SHANI_TRADINGVIEW__WEBHOOK_SECRET=…``.
+    Environment variables genuinely win, so a secret or a one-off override can
+    be injected without touching the file:
+
+        SHANI_TRADINGVIEW__WEBHOOK_SECRET=…
+        SHANI_TRADINGVIEW__DESKTOP_ENABLED=true
+
+    See :class:`_YamlSettingsSource` for why this needs a custom source rather
+    than simply splatting the parsed YAML into the constructor.
     """
-    config_path = path or CONFIG_PATH
-    file_values: dict[str, Any] = {}
-    if config_path.exists():
-        loaded = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-        if isinstance(loaded, dict):
-            file_values = loaded
-    config = Config(**file_values)
+    global _yaml_path
+    _yaml_path = path or CONFIG_PATH
+    config = Config()
     config.ensure_dirs()
     return config

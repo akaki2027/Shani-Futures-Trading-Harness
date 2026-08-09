@@ -96,57 +96,122 @@ class PineDiagnostic:
 # returning either a result object or ``{error: "..."}`` — never throwing, since
 # an exception across the CDP boundary loses its message.
 
+# Resolving the chart widget is the one thing every expression needs, and the
+# correct global depends on which TradingView surface you are attached to.
+#
+# Verified against TradingView Desktop 3.3.0 (Microsoft Store build) on
+# tradingview.com's own chart page:
+#
+#   window.TradingViewApi   — the real application. What Desktop and the website
+#                             both use. Checked FIRST.
+#   window.tvWidget         — the embeddable Charting Library global. Present
+#                             only in widget embeds, NOT on tradingview.com.
+#
+# Earlier versions of this file checked only `tvWidget`, which fails on every
+# real Desktop install with "tvWidget not available". If a future release moves
+# things again, this resolver is the first place to look.
+_JS_WIDGET = """
+    (window.TradingViewApi
+      || window.tvWidget
+      || (window.TradingView && window.TradingView.widget))
+"""
+
+# Series accessors differ between surfaces, so last price is best-effort across
+# several shapes rather than assuming one. A missing price must not fail the
+# whole read — symbol, timeframe, and studies are the valuable part.
+_JS_LAST_PRICE = """
+  (() => {
+    try {
+      const s = chart.getSeries();
+      if (!s) return null;
+      if (typeof s.lastPrice === 'function') return s.lastPrice();
+      if (typeof s.lastValue === 'function') return s.lastValue();
+      if (typeof s.data === 'function') {
+        const d = s.data();
+        const bars = (d && typeof d.bars === 'function') ? d.bars() : d;
+        if (Array.isArray(bars) && bars.length) {
+          const b = bars[bars.length - 1];
+          return b.close != null ? b.close : (Array.isArray(b.value) ? b.value[4] : null);
+        }
+      }
+      if (typeof s.priceScale === 'function') {
+        const ps = s.priceScale();
+        if (ps && typeof ps.lastPrice === 'function') return ps.lastPrice();
+      }
+    } catch (e) {}
+    return null;
+  })()
+"""
+
 _JS_CHART_STATE = """
 (() => {
-  const w = window.tvWidget || (window.TradingView && window.TradingView.widget);
-  if (!w || !w.activeChart) return { error: 'tvWidget not available - is a chart loaded?' };
+  const w = %s;
+  if (!w || !w.activeChart) {
+    return { error: 'No TradingView chart API on this page - is a chart tab open and loaded?' };
+  }
   const chart = w.activeChart();
   let studies = [];
   try { studies = (chart.getAllStudies() || []).map(s => s.name); } catch (e) {}
-  let lastPrice = null;
-  try { lastPrice = chart.getSeries().lastPrice(); } catch (e) {}
   return {
     symbol: chart.symbol(),
-    resolution: chart.resolution(),
+    resolution: String(chart.resolution()),
     studies: studies,
-    lastPrice: lastPrice,
+    lastPrice: %s,
   };
 })()
-"""
+""" % (_JS_WIDGET, _JS_LAST_PRICE)
 
-_JS_SET_SYMBOL = """
+_JS_SET_SYMBOL = ("""
 (() => {
-  const w = window.tvWidget;
-  if (!w || !w.activeChart) return { error: 'tvWidget not available' };
+  const w = %s;
+  if (!w || !w.activeChart) return { error: 'No TradingView chart API on this page' };
+  const target = %%s;
   return new Promise((resolve) => {
-    w.activeChart().setSymbol(%s, () => resolve({ symbol: w.activeChart().symbol() }));
+    const done = () => resolve({ symbol: w.activeChart().symbol() });
+    try {
+      // The application exposes changeSymbol at the top level; the Charting
+      // Library only has setSymbol on the chart. Prefer whichever exists.
+      if (typeof w.changeSymbol === 'function') { w.changeSymbol(target); setTimeout(done, 400); }
+      else { w.activeChart().setSymbol(target, done); }
+    } catch (e) { resolve({ error: String(e && e.message || e) }); }
   });
 })()
-"""
+""" % _JS_WIDGET)
 
-_JS_SET_RESOLUTION = """
+_JS_SET_RESOLUTION = ("""
 (() => {
-  const w = window.tvWidget;
-  if (!w || !w.activeChart) return { error: 'tvWidget not available' };
-  w.activeChart().setResolution(%s);
-  return { resolution: w.activeChart().resolution() };
+  const w = %s;
+  if (!w || !w.activeChart) return { error: 'No TradingView chart API on this page' };
+  w.activeChart().setResolution(%%s);
+  return { resolution: String(w.activeChart().resolution()) };
 })()
-"""
+""" % _JS_WIDGET)
 
-_JS_OHLCV = """
+_JS_OHLCV = ("""
 (() => {
-  const w = window.tvWidget;
-  if (!w || !w.activeChart) return { error: 'tvWidget not available' };
+  const w = %s;
+  if (!w || !w.activeChart) return { error: 'No TradingView chart API on this page' };
   let series;
   try { series = w.activeChart().getSeries(); } catch (e) { return { error: 'no series' }; }
-  if (!series || !series.data) return { error: 'series data unavailable' };
-  const bars = series.data().slice(-%d).map(b => ({
-    time: new Date(b.time).toISOString(),
-    open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume || 0,
-  }));
+  if (!series || typeof series.data !== 'function') return { error: 'series data unavailable' };
+  const d = series.data();
+  // Some surfaces return a bar-store object rather than a plain array.
+  const raw = (d && typeof d.bars === 'function') ? d.bars() : d;
+  if (!Array.isArray(raw)) return { error: 'series data is not enumerable' };
+  const bars = raw.slice(-%%d).map(b => {
+    const v = Array.isArray(b.value) ? b.value : null;
+    return {
+      time: new Date((v ? v[0] : b.time) * (String(v ? v[0] : b.time).length <= 10 ? 1000 : 1)).toISOString(),
+      open:   v ? v[1] : b.open,
+      high:   v ? v[2] : b.high,
+      low:    v ? v[3] : b.low,
+      close:  v ? v[4] : b.close,
+      volume: (v ? v[5] : b.volume) || 0,
+    };
+  });
   return { bars: bars };
 })()
-"""
+""" % _JS_WIDGET)
 
 #: The Pine editor is the Monaco instance whose language id is ``pinescript``.
 #: Falls back to the first editor, since the language id is not always set.
@@ -248,8 +313,18 @@ class TradingViewDesktop:
                 f"Debug port {self.endpoint} is reachable but exposes no page target. "
                 f"Is this actually TradingView Desktop, and is a chart open?"
             )
-        # Prefer a target that looks like a chart when several windows are open.
-        chart = next((t for t in pages if "chart" in t.get("url", "").lower()), pages[0])
+        # TradingView Desktop exposes a dozen page targets — the chart, symbol
+        # pages, the screener, and several internal `file://` shell windows for
+        # the title bar, tooltips, and drag handling. Match the chart URL
+        # specifically; a loose "chart" substring test can land on an internal
+        # window and produce a baffling "no chart API" error.
+        chart = next(
+            (t for t in pages if "/chart/" in t.get("url", "").lower()),
+            None,
+        ) or next(
+            (t for t in pages if "tradingview.com" in t.get("url", "").lower()),
+            pages[0],
+        )
         self._ws_url = str(chart["webSocketDebuggerUrl"])
         return self._ws_url
 
