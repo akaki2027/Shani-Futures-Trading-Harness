@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -211,15 +212,34 @@ CREATE VIRTUAL TABLE IF NOT EXISTS setups_fts USING fts5(
 """
 
 
+#: Serialises writes across threads. See :func:`connect`.
+_WRITE_LOCK = threading.RLock()
+
+
 def connect(path: Path | str) -> sqlite3.Connection:
     """Open a connection with the pragmas this workload needs.
 
-    WAL matters here specifically: the FastAPI server reads while the broker
-    writes, and the default rollback journal makes those block each other.
+    **WAL** matters specifically because the FastAPI server reads while the
+    broker writes, and the default rollback journal makes those block each
+    other.
+
+    **``check_same_thread=False``** is required, not merely convenient. FastAPI
+    runs synchronous endpoint handlers in a threadpool, so the connection opened
+    at startup is used from whichever worker thread serves a request. SQLite's
+    default refuses that outright, and the failure surfaces as a
+    ``ProgrammingError`` under real concurrent load rather than in casual
+    single-request testing — which is a nasty way to find out.
+
+    Disabling the check makes the connection shareable but does not make it
+    thread-safe, so writes are serialised through :data:`_WRITE_LOCK`. Under
+    WAL, concurrent readers are fine and only writers need excluding, which is
+    exactly the shape of this workload: one writer, several readers.
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path), detect_types=0, isolation_level=None)
+    conn = sqlite3.connect(
+        str(path), detect_types=0, isolation_level=None, check_same_thread=False
+    )
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA foreign_keys = ON")
@@ -250,7 +270,11 @@ class Repository(Generic[T]):
     # ── writes ───────────────────────────────────────────────────────────────
 
     def save(self, record: T) -> T:
-        """Insert or replace, refreshing ``updated_at`` and any FTS row."""
+        """Insert or replace, refreshing ``updated_at`` and any FTS row.
+
+        The write and its FTS reindex happen under one lock so a concurrent
+        reader can never observe a row whose search index has not caught up.
+        """
         record.touch()
         cols = ["id", "created_at", "updated_at", "deleted_at", "data"]
         vals: list[Any] = [
@@ -265,11 +289,13 @@ class Repository(Generic[T]):
             vals.append(extract(record))
 
         placeholders = ", ".join("?" for _ in cols)
-        self.conn.execute(
-            f"INSERT OR REPLACE INTO {self.table} ({', '.join(cols)}) VALUES ({placeholders})",
-            vals,
-        )
-        self._index(record)
+        with _WRITE_LOCK:
+            self.conn.execute(
+                f"INSERT OR REPLACE INTO {self.table} ({', '.join(cols)}) "
+                f"VALUES ({placeholders})",
+                vals,
+            )
+            self._index(record)
         return record
 
     def save_many(self, records: Sequence[T]) -> None:
@@ -305,9 +331,10 @@ class Repository(Generic[T]):
     def delete(self, record: T, *, hard: bool = False) -> None:
         """Soft-delete by default so the deletion can propagate to other devices."""
         if hard:
-            self.conn.execute(f"DELETE FROM {self.table} WHERE id = ?", (str(record.id),))
-            self.conn.execute("DELETE FROM trades_fts WHERE id = ?", (str(record.id),))
-            self.conn.execute("DELETE FROM setups_fts WHERE id = ?", (str(record.id),))
+            with _WRITE_LOCK:
+                self.conn.execute(f"DELETE FROM {self.table} WHERE id = ?", (str(record.id),))
+                self.conn.execute("DELETE FROM trades_fts WHERE id = ?", (str(record.id),))
+                self.conn.execute("DELETE FROM setups_fts WHERE id = ?", (str(record.id),))
             return
         record.soft_delete()
         self.save(record)
