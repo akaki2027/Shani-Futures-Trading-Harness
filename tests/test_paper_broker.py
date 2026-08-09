@@ -63,7 +63,7 @@ class TestValidation:
     def test_rejection_message_suggests_the_nearest_valid_price(self, broker: PaperBroker) -> None:
         order = Order(symbol="ES", side=Side.BUY, quantity=1,
                       order_type=OrderType.LIMIT, limit_price=Decimal("5001.13"))
-        with pytest.raises(OrderRejectedError, match="5001.25"):
+        with pytest.raises(OrderRejectedError, match=r"5001\.25"):
             broker.submit(order, at=OPEN)
 
     def test_on_tick_limit_is_accepted(self, broker: PaperBroker) -> None:

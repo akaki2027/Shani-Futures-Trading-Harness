@@ -120,8 +120,26 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "A", "C4", "SIM", "RUF"]
 ignore = [
-    "E501",   # line length is handled by the formatter
+    "E501",   # Line length is handled by the formatter.
+    # Prose in this codebase uses real typographic characters — em dashes,
+    # arrows in diagrams, the minus sign in worked P&L examples. The docstrings
+    # explain trading concepts and financial arithmetic, and they are meant to
+    # be read. Flattening them to ASCII would make them worse.
+    "RUF001", "RUF002", "RUF003",
+    # `class Side(str, Enum)` rather than StrEnum, deliberately: Pydantic
+    # serialises the mixin form predictably across versions, and every model
+    # here round-trips through JSON in the database.
+    "UP042",
+    # WebhookRejected reads correctly at its call sites; WebhookRejectedError
+    # does not improve anything.
+    "N818",
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# This module builds JavaScript source strings for injection into the
+# TradingView page. Percent-formatting keeps the JS templates readable as JS;
+# f-strings would require doubling every brace in the embedded code.
+"shani/market/tradingview_cdp.py" = ["UP031"]
 
 [tool.mypy]
 python_version = "3.11"

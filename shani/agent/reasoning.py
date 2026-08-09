@@ -46,7 +46,7 @@ from shani.models import (
     Trade,
 )
 
-__all__ = ["Agent", "DEFAULT_QUESTIONS"]
+__all__ = ["DEFAULT_QUESTIONS", "Agent"]
 
 #: Asked after every closed trade.
 #:

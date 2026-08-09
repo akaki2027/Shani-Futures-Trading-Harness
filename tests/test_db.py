@@ -18,7 +18,6 @@ from shani.db import Database
 from shani.models import (
     InterviewAnswer,
     Order,
-    OrderStatus,
     OrderType,
     SetupCard,
     Side,

@@ -1,0 +1,571 @@
+/* Shani — design system.
+ *
+ * Use scene, which is what picks the palette rather than the category: a
+ * futures trader at a desk, frequently before dawn for the London session,
+ * reading dense numerals for hours in a dim room. So: low-glare dark ground,
+ * warm foreground, and P&L colours desaturated enough that a red column at
+ * 04:00 does not burn.
+ *
+ * The name is Saturn — the slow teacher who instructs through consequence. The
+ * world is patient and editorial rather than energetic: a serif with real
+ * character for headings, an ochre accent taken from the planet, and no neon
+ * anywhere. Trading software defaults to shouting. This one is deliberately
+ * quiet, because it is here to help someone think, not to feel exciting.
+ */
+
+:root {
+  /* Ground — a desaturated blue-black, warmed slightly so it reads as night
+     rather than as switched-off. */
+  --ground-000: #0b0d12;
+  --ground-050: #10131a;
+  --ground-100: #161a23;
+  --ground-200: #1e232e;
+  --ground-300: #2a303d;
+  --ground-400: #3a4252;
+
+  /* Foreground — bone rather than white. Pure #fff on near-black is the
+     highest-glare combination available and the worst possible choice for a
+     screen someone stares at for six hours. */
+  --fg-000: #ece7dd;
+  --fg-100: #c9c3b8;
+  --fg-200: #9a948a;
+  --fg-300: #6e6a63;
+
+  /* Saturn. The single accent. */
+  --accent: #c9922e;
+  --accent-bright: #e0aa46;
+  --accent-dim: #8a6620;
+  --accent-wash: rgba(201, 146, 46, 0.12);
+
+  /* P&L. Muted on purpose — these appear hundreds of times per screen. */
+  --up: #6f9b6a;
+  --up-bright: #8ab884;
+  --down: #b56a5e;
+  --down-bright: #cd8579;
+  --up-wash: rgba(111, 155, 106, 0.14);
+  --down-wash: rgba(181, 106, 94, 0.14);
+
+  --line: rgba(236, 231, 221, 0.09);
+  --line-strong: rgba(236, 231, 221, 0.16);
+
+  --font-display: var(--font-fraunces), Georgia, 'Times New Roman', serif;
+  --font-ui: var(--font-plex), ui-sans-serif, system-ui, sans-serif;
+
+  /* Shadows carry an offset and a soft blur. A zero-offset coloured halo is
+     decoration, not depth. */
+  --shadow-low: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.24);
+  --shadow-high: 0 4px 8px rgba(0, 0, 0, 0.44), 0 16px 40px rgba(0, 0, 0, 0.36);
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--ground-000);
+  color: var(--fg-100);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* ── Browser surfaces ──────────────────────────────────────────────────────
+ * The parts nobody draws still carry the design. Selection, caret, scrollbars,
+ * and focus rings ship with defaults that belong to no design system. */
+
+::selection {
+  background: var(--accent-wash);
+  color: var(--fg-000);
+}
+
+* {
+  caret-color: var(--accent-bright);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--ground-050);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--ground-300);
+  border-radius: 5px;
+  border: 2px solid var(--ground-050);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ground-400);
+}
+* {
+  scrollbar-color: var(--ground-300) var(--ground-050);
+  scrollbar-width: thin;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent-bright);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+a {
+  color: var(--accent-bright);
+  text-decoration-color: var(--accent-dim);
+  text-underline-offset: 0.2em;
+  text-decoration-thickness: 1px;
+}
+
+/* ── Type ─────────────────────────────────────────────────────────────────── */
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  color: var(--fg-000);
+  font-weight: 550;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+  margin: 0;
+}
+
+h1 {
+  font-size: clamp(1.6rem, 3vw, 2.1rem);
+  line-height: 1.1;
+}
+h2 {
+  font-size: 1.0625rem;
+  line-height: 1.25;
+}
+h3 {
+  font-size: 0.9375rem;
+}
+
+/* Every figure in this application is a measurement, so numerals are tabular
+   everywhere. Proportional figures make a column of prices jitter as digits
+   change, and a trader scanning for a level reads the shape of the column. */
+.num,
+td,
+th,
+input[type='number'],
+input[type='text'] {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1, 'ss01' 1;
+}
+
+.label {
+  font-size: 0.6875rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-300);
+  font-weight: 500;
+}
+
+.up {
+  color: var(--up-bright);
+}
+.down {
+  color: var(--down-bright);
+}
+.muted {
+  color: var(--fg-300);
+}
+
+/* ── Layout ───────────────────────────────────────────────────────────────── */
+
+.shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+}
+
+.masthead {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  padding: 0.875rem 1.5rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--ground-050);
+}
+
+.wordmark {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--fg-000);
+  letter-spacing: -0.02em;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.masthead-stats {
+  margin-left: auto;
+  display: flex;
+  align-items: baseline;
+  gap: 1.75rem;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.stat-value {
+  font-size: 0.9375rem;
+  color: var(--fg-000);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A single persistent line, not a dismissible toast. Someone arriving at this
+   screen must always be able to tell whether it can move real money. */
+.mode-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1.5rem;
+  font-size: 0.75rem;
+  background: var(--accent-wash);
+  border-bottom: 1px solid var(--line);
+  color: var(--fg-100);
+}
+.mode-banner.live {
+  background: var(--down-wash);
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr) 320px;
+  gap: 1px;
+  background: var(--line);
+  min-height: 0;
+}
+
+.column {
+  background: var(--ground-000);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.region {
+  border-bottom: 1px solid var(--line);
+}
+.region-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem 0.5rem;
+}
+.region-body {
+  padding: 0 1rem 1rem;
+}
+
+/* ── Controls ─────────────────────────────────────────────────────────────── */
+
+button {
+  font: inherit;
+  font-family: var(--font-ui);
+  cursor: pointer;
+  border: 1px solid var(--line-strong);
+  background: var(--ground-200);
+  color: var(--fg-100);
+  padding: 0.4rem 0.75rem;
+  border-radius: 3px;
+  transition: background 120ms var(--ease-out), border-color 120ms var(--ease-out);
+}
+button:hover:not(:disabled) {
+  background: var(--ground-300);
+  border-color: var(--fg-300);
+}
+button:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+button.primary {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--fg-000);
+  font-weight: 500;
+}
+button.primary:hover:not(:disabled) {
+  background: var(--accent);
+}
+
+button.buy {
+  background: rgba(111, 155, 106, 0.18);
+  border-color: var(--up);
+  color: var(--up-bright);
+}
+button.buy:hover:not(:disabled) {
+  background: rgba(111, 155, 106, 0.3);
+}
+button.sell {
+  background: rgba(181, 106, 94, 0.18);
+  border-color: var(--down);
+  color: var(--down-bright);
+}
+button.sell:hover:not(:disabled) {
+  background: rgba(181, 106, 94, 0.3);
+}
+button.selected {
+  box-shadow: inset 0 0 0 1px var(--accent-bright);
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  font-family: var(--font-ui);
+  background: var(--ground-100);
+  border: 1px solid var(--line-strong);
+  color: var(--fg-000);
+  padding: 0.4rem 0.55rem;
+  border-radius: 3px;
+  width: 100%;
+}
+input::placeholder,
+textarea::placeholder {
+  /* Tinted from the foreground, never gray, and kept above 4.5:1. */
+  color: var(--fg-300);
+}
+input:hover,
+textarea:hover {
+  border-color: var(--fg-300);
+}
+
+textarea {
+  resize: vertical;
+  min-height: 4.5rem;
+  line-height: 1.5;
+}
+
+/* ── Data ─────────────────────────────────────────────────────────────────── */
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+th {
+  text-align: left;
+  font-size: 0.6875rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-300);
+  font-weight: 500;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--line);
+}
+td {
+  padding: 0.45rem 0.5rem;
+  border-bottom: 1px solid var(--line);
+  color: var(--fg-100);
+}
+tbody tr {
+  transition: background 100ms var(--ease-out);
+}
+tbody tr:hover {
+  background: var(--ground-050);
+}
+.right {
+  text-align: right;
+}
+
+.quote {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.55rem 0.5rem;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+  transition: background 100ms var(--ease-out);
+  width: 100%;
+  text-align: left;
+  border-radius: 0;
+  background: transparent;
+  border-left: none;
+  border-right: none;
+  border-top: none;
+}
+.quote:hover {
+  background: var(--ground-050);
+}
+.quote[aria-pressed='true'] {
+  background: var(--accent-wash);
+}
+.quote-symbol {
+  color: var(--fg-000);
+  font-weight: 500;
+}
+.quote-name {
+  font-size: 0.6875rem;
+  color: var(--fg-300);
+}
+.quote-price {
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-000);
+}
+.quote-change {
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Heatmap ──────────────────────────────────────────────────────────────
+ * The headline statistic for a futures trader. Most people have one part of
+ * the day quietly funding the rest, and this is the view that shows it. */
+
+.heat-row {
+  display: grid;
+  grid-template-columns: 6.5rem 1fr 5rem;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.3rem 0;
+  font-size: 0.75rem;
+}
+.heat-track {
+  position: relative;
+  height: 1.1rem;
+  background: var(--ground-100);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.heat-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  transition: width 400ms var(--ease-out);
+}
+.heat-zero {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--line-strong);
+}
+
+/* ── Interview ───────────────────────────────────────────────────────────── */
+
+.interview-question {
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--line);
+}
+.interview-question:last-child {
+  border-bottom: none;
+}
+.question-text {
+  color: var(--fg-000);
+  margin-bottom: 0.45rem;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+
+.answered-mark {
+  color: var(--up-bright);
+}
+
+/* ── States ──────────────────────────────────────────────────────────────── */
+
+.empty {
+  padding: 1.5rem 0.5rem;
+  color: var(--fg-300);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  max-width: 46ch;
+}
+
+.error {
+  padding: 0.6rem 0.75rem;
+  background: var(--down-wash);
+  border: 1px solid rgba(181, 106, 94, 0.35);
+  border-radius: 3px;
+  color: var(--down-bright);
+  font-size: 0.75rem;
+}
+
+.loading {
+  color: var(--fg-300);
+  font-size: 0.8125rem;
+  padding: 1rem 0.5rem;
+}
+
+/* One authored motion moment: content settling in on arrival. Exponential
+   ease-out from an already-visible default, so nothing is invisible if the
+   animation never runs. */
+@keyframes settle {
+  from {
+    opacity: 0.4;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.settle {
+  animation: settle 320ms var(--ease-out) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.chart-frame {
+  height: 380px;
+  border-bottom: 1px solid var(--line);
+  position: relative;
+}
+
+.provisional {
+  display: inline-block;
+  font-size: 0.625rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent-bright);
+  background: var(--accent-wash);
+  padding: 0.1rem 0.35rem;
+  border-radius: 2px;
+  vertical-align: middle;
+}
+
+.ungrounded {
+  color: var(--fg-300);
+  font-size: 0.6875rem;
+  font-style: italic;
+}
+
+@media (max-width: 1100px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+  .column {
+    overflow-y: visible;
+  }
+  .masthead-stats {
+    gap: 1rem;
+  }
+}

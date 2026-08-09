@@ -15,7 +15,6 @@ import asyncio
 import secrets
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -240,7 +239,7 @@ def demo(
     ]
 
     created = 0
-    for i in range(trades):
+    for _ in range(trades):
         tod, session, hour, minute, win_rate, r_scale = random.choice(profiles)
         symbol = random.choice(["ES", "ES", "NQ", "CL"])
         instrument_risk = Decimal("250")

@@ -32,7 +32,6 @@ from pydantic import BaseModel, Field
 from shani.agent.llm import build_llm
 from shani.agent.reasoning import Agent
 from shani.audit import AuditLog, EventType
-from shani.brokers.paper import PaperBroker
 from shani.brokers.registry import build_registry
 from shani.config import Config, load_config
 from shani.db import Database
@@ -112,7 +111,13 @@ def build_app(config: Config | None = None) -> FastAPI:
 
     # ── health ───────────────────────────────────────────────────────────────
 
+    # Exposed at both paths on purpose. ``/health`` is the conventional location
+    # for a container or uptime probe; ``/api/health`` lets browser clients reach
+    # it through the same single proxy prefix as everything else, rather than
+    # needing a second rewrite rule or a relative-path trick that the browser
+    # will normalise out from under them.
     @app.get("/health")
+    @app.get("/api/health")
     def health() -> dict[str, Any]:
         return {
             "status": "ok",
