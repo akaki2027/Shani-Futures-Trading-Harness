@@ -449,11 +449,25 @@ tbody tr:hover {
   border-radius: 2px;
   overflow: hidden;
 }
+/* Bars diverge from a centre line, and they animate on transform rather than
+   width. Animating width forces layout on every frame; scaleX is composited,
+   so the row stays smooth even when the whole table re-renders on a poll. */
 .heat-fill {
   position: absolute;
   top: 0;
   bottom: 0;
-  transition: width 400ms var(--ease-out);
+  width: 50%;
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 400ms var(--ease-out);
+}
+.heat-fill.negative {
+  /* Losses grow leftward from the centre line. */
+  left: 0;
+  transform-origin: right center;
+}
+.heat-fill.positive {
+  left: 50%;
 }
 .heat-zero {
   position: absolute;

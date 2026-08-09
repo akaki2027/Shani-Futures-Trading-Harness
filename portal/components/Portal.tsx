@@ -328,18 +328,20 @@ function TimeOfDay({ stats }: { stats: Stats }) {
           <>
             {slices.map((slice) => {
               const value = Number(slice.net_pnl);
-              const width = (Math.abs(value) / scale) * 50;
+              // Ratio of the half-track, driven through scaleX so the bar
+              // animates on the compositor instead of forcing layout.
+              const ratio = Math.abs(value) / scale;
+              const positive = value >= 0;
               return (
                 <div className="heat-row" key={slice.label}>
                   <span className="muted">{slice.label}</span>
                   <span className="heat-track">
                     <span className="heat-zero" style={{ left: '50%' }} />
                     <span
-                      className="heat-fill"
+                      className={`heat-fill ${positive ? 'positive' : 'negative'}`}
                       style={{
-                        width: `${width}%`,
-                        left: value >= 0 ? '50%' : `${50 - width}%`,
-                        background: value >= 0 ? 'var(--up)' : 'var(--down)',
+                        transform: `scaleX(${ratio})`,
+                        background: positive ? 'var(--up)' : 'var(--down)',
                       }}
                     />
                   </span>
