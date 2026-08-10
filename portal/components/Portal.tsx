@@ -65,6 +65,7 @@ export function Portal() {
   const [openTrade, setOpenTrade] = useState<Trade | null>(null);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
+  const [needsToken, setNeedsToken] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -90,8 +91,16 @@ export function Portal() {
       setPlaybook(pb);
       setEvaluation(ev);
       setNotice(null);
+      setNeedsToken(false);
     } catch (error) {
-      setNotice(error instanceof ApiError ? error.message : 'Cannot reach the Shani API.');
+      // A 401 gets its own screen. Rendering empty panels instead would be a
+      // lie: "no trades yet" and "I am not allowed to read your trades" look
+      // identical to the user and mean completely different things.
+      if (error instanceof ApiError && error.status === 401) {
+        setNeedsToken(true);
+      } else {
+        setNotice(error instanceof ApiError ? error.message : 'Cannot reach the Shani API.');
+      }
     } finally {
       setLoading(false);
     }
@@ -105,6 +114,10 @@ export function Portal() {
 
   if (loading) {
     return <div className="loading">Connecting to Shani…</div>;
+  }
+
+  if (needsToken) {
+    return <TokenGate onSaved={() => void refresh()} />;
   }
 
   const live = health?.live_enabled ?? false;
@@ -206,6 +219,60 @@ export function Portal() {
           }}
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * Shown when the API rejects the request for lack of a token.
+ *
+ * Exists because the alternative is worse than useless: without it the portal
+ * renders "no trades yet" everywhere, which is indistinguishable from an empty
+ * journal and sends the user looking for a data problem that does not exist.
+ *
+ * The token is stored in localStorage rather than a cookie — it is a
+ * loopback-only bearer credential for a single-user service, and keeping it out
+ * of automatic request headers means nothing can send it anywhere by accident.
+ */
+function TokenGate({ onSaved }: { onSaved: () => void }) {
+  const [value, setValue] = useState('');
+
+  const save = () => {
+    if (!value.trim()) return;
+    localStorage.setItem('shani_token', value.trim());
+    setValue('');
+    onSaved();
+  };
+
+  return (
+    <div style={{ display: 'grid', placeItems: 'center', minHeight: '100vh', padding: '1.5rem' }}>
+      <div className="settle" style={{ maxWidth: 520, width: '100%' }}>
+        <h1 style={{ marginBottom: '0.5rem' }}>Shani needs your API token</h1>
+        <p style={{ fontSize: '0.875rem', lineHeight: 1.6, color: 'var(--fg-100)' }}>
+          The API is running and refusing this browser, which is the correct
+          behaviour — it just has no way to know who you are yet.
+        </p>
+        <p style={{ fontSize: '0.8125rem', lineHeight: 1.6 }}>
+          Copy the value of <code>SHANI_SERVER__API_TOKEN</code> from your{' '}
+          <code>.env</code>. Leave that setting blank instead if you would rather
+          run without auth on loopback.
+        </p>
+        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
+          <input
+            type="password"
+            value={value}
+            placeholder="Paste token"
+            autoFocus
+            onChange={(event) => setValue(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') save();
+            }}
+          />
+          <button className="primary" onClick={save} disabled={!value.trim()}>
+            Connect
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
