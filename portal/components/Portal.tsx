@@ -22,6 +22,7 @@ import {
 } from '@/lib/api';
 import { EquityChart } from './EquityChart';
 import { PriceChart } from './PriceChart';
+import { Settings } from './Settings';
 
 /* Icons are drawn, not borrowed from the emoji table — one stroke weight, one
    grid, sized to the type they sit beside. */
@@ -36,6 +37,18 @@ const Ring = () => (
       stroke="var(--accent)"
       strokeWidth="1.5"
       transform="rotate(-20 12 12)"
+    />
+  </svg>
+);
+
+const Gear = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <circle cx="12" cy="12" r="3.2" stroke="currentColor" strokeWidth="1.6" />
+    <path
+      d="M12 2.8v2.4M12 18.8v2.4M21.2 12h-2.4M5.2 12H2.8M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7M18.5 18.5l-1.7-1.7M7.2 7.2 5.5 5.5"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
     />
   </svg>
 );
@@ -67,6 +80,7 @@ export function Portal() {
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
   const [needsToken, setNeedsToken] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -152,6 +166,14 @@ export function Portal() {
             </div>
           </div>
         )}
+        <button
+          onClick={() => setShowSettings(true)}
+          title="Model settings"
+          aria-label="Model settings"
+          style={{ marginLeft: account ? '1.25rem' : 'auto', padding: '0.35rem 0.5rem' }}
+        >
+          <Gear />
+        </button>
       </header>
 
       {/* Persistent, not dismissible. Whether this screen can move real money is
@@ -216,6 +238,8 @@ export function Portal() {
           <Playbook cards={playbook} />
         </div>
       </div>
+
+      {showSettings && <Settings onClose={() => setShowSettings(false)} />}
 
       {openTrade && (
         <Interview

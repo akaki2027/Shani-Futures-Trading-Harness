@@ -238,6 +238,28 @@ export interface BarsResponse {
   bars: Bar[];
 }
 
+export interface ModelSettings {
+  provider: string;
+  triage_model: string;
+  reasoning_model: string;
+  base_url: string | null;
+  temperature: number;
+  key_env_var: string | null;
+  has_key: boolean;
+  /** Last four characters only. The key itself is never returned. */
+  key_hint: string | null;
+}
+
+export interface CatalogueModel {
+  id: string;
+  name: string;
+  context_length: number | null;
+  prompt_per_m: string | null;
+  completion_per_m: string | null;
+  is_free: boolean;
+  modalities: string[];
+}
+
 export interface OrderResult {
   id: string;
   symbol: string;
@@ -258,6 +280,25 @@ export const api = {
   stats: () => request<Stats>('/stats'),
   equity: () => request<EquityPoint[]>('/equity'),
   playbook: () => request<SetupCard[]>('/playbook'),
+  modelSettings: () => request<ModelSettings>('/settings/model'),
+
+  modelCatalogue: (provider = 'openrouter', refresh = false) =>
+    request<{ provider: string; models: CatalogueModel[]; error: string | null }>(
+      `/settings/models?provider=${provider}${refresh ? '&refresh=true' : ''}`,
+    ),
+
+  saveModelSettings: (body: {
+    provider: string;
+    triage_model?: string;
+    reasoning_model?: string;
+    base_url?: string | null;
+    api_key?: string;
+  }) => request<ModelSettings>('/settings/model', { method: 'POST', body: JSON.stringify(body) }),
+
+  testModel: () => request<{ ok: boolean; detail: string }>('/settings/model/test', {
+    method: 'POST',
+  }),
+
   bars: (symbol: string, interval: string) =>
     request<BarsResponse>(`/bars/${symbol}?interval=${encodeURIComponent(interval)}`),
   evaluation: () => request<Evaluation>('/evaluation'),

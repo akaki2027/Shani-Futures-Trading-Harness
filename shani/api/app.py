@@ -19,16 +19,18 @@ why it carries an HMAC instead.
 
 from __future__ import annotations
 
+import os
 import secrets
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from shani.agent.catalogue import ModelCatalogue, ModelCatalogueError
 from shani.agent.llm import build_llm
 from shani.agent.reasoning import Agent
 from shani.audit import AuditLog, EventType
@@ -44,6 +46,12 @@ from shani.memory.stats import compute_stats, daily_pnl, equity_curve, evaluate_
 from shani.models import Order, OrderType, Side
 from shani.notify import Notifier
 from shani.risk.policy import RiskPolicy
+from shani.settings_store import (
+    PROVIDER_KEYS,
+    read_model_env,
+    write_config_values,
+    write_env_values,
+)
 
 __all__ = ["build_app"]
 
@@ -68,6 +76,15 @@ class PriceRequest(BaseModel):
     price: Decimal
 
 
+class ModelSettingsRequest(BaseModel):
+    provider: Literal["anthropic", "openai", "openrouter", "ollama", "none"]
+    triage_model: str = ""
+    reasoning_model: str = ""
+    base_url: str | None = None
+    #: Write-only. Persisted to .env and never echoed back by any endpoint.
+    api_key: str | None = None
+
+
 def build_app(config: Config | None = None) -> FastAPI:
     cfg = config or load_config()
     cfg.ensure_dirs()
@@ -80,6 +97,7 @@ def build_app(config: Config | None = None) -> FastAPI:
     playbook = Playbook(db)
     screener = ScreenerProvider(cache_seconds=cfg.tradingview.screener_cache_seconds)
     bars_provider = BarsProvider()
+    model_catalogue = ModelCatalogue()
     agent = Agent(db, build_llm(cfg.model), audit)
     notifier = Notifier()
 
@@ -127,6 +145,75 @@ def build_app(config: Config | None = None) -> FastAPI:
             "live_enabled": cfg.broker.live_enabled,
             "model": cfg.model.provider if cfg.model.enabled else "disabled",
         }
+
+    # ── model settings ───────────────────────────────────────────────────────
+
+    @app.get("/api/settings/model", dependencies=auth)
+    def get_model_settings() -> dict[str, Any]:
+        """Current model configuration. The API key is masked, never returned."""
+        return read_model_env(load_config())
+
+    @app.get("/api/settings/models", dependencies=auth)
+    def list_models(provider: str = "openrouter", refresh: bool = False) -> dict[str, Any]:
+        """Live model catalogue for the provider.
+
+        Fetched rather than hardcoded: OpenRouter alone lists several hundred
+        models and the set changes weekly, so a baked-in list is stale before it
+        ships. Pricing comes back with it so the cost of a choice is visible at
+        the point the choice is made — the triage tier runs on every signal, and
+        picking an expensive model there is an easy and costly mistake.
+        """
+        if provider != "openrouter":
+            return {"provider": provider, "models": [], "error": None}
+        try:
+            models = model_catalogue.fetch(refresh=refresh)
+        except ModelCatalogueError as exc:
+            return {"provider": provider, "models": [], "error": str(exc)}
+        return {"provider": provider, "models": models, "error": None}
+
+    @app.post("/api/settings/model", dependencies=auth)
+    def update_model_settings(body: ModelSettingsRequest) -> dict[str, Any]:
+        """Persist model settings. Secrets to .env, everything else to config.yaml."""
+        non_secret: dict[str, object] = {"provider": body.provider}
+        if body.triage_model:
+            non_secret["triage_model"] = body.triage_model
+        if body.reasoning_model:
+            non_secret["reasoning_model"] = body.reasoning_model
+        if body.base_url is not None:
+            non_secret["base_url"] = body.base_url or None
+        write_config_values("model", non_secret)
+
+        if body.api_key:
+            env_var = PROVIDER_KEYS.get(body.provider, "")
+            if not env_var:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"{body.provider} takes no API key.",
+                )
+            write_env_values({env_var: body.api_key.strip()})
+            # The running process was started before the key existed, so make it
+            # visible now rather than requiring a restart to use what was just
+            # saved.
+            os.environ[env_var] = body.api_key.strip()
+
+        model_catalogue.invalidate()
+        audit.record(
+            EventType.CONFIG_CHANGED,
+            f"Model settings updated — {body.provider}",
+            payload={
+                "provider": body.provider,
+                "triage_model": body.triage_model,
+                "reasoning_model": body.reasoning_model,
+                "key_changed": bool(body.api_key),
+            },
+        )
+        return read_model_env(load_config())
+
+    @app.post("/api/settings/model/test", dependencies=auth)
+    def test_model_settings() -> dict[str, Any]:
+        """Round-trip a real completion so 'saved' and 'working' are distinguishable."""
+        healthy, detail = build_llm(load_config().model).check()
+        return {"ok": healthy, "detail": detail}
 
     # ── market data (Plane A) ────────────────────────────────────────────────
 
