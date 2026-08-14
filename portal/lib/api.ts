@@ -35,11 +35,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
 
   if (!response.ok) {
-    let detail: unknown;
+    // Read the body exactly once. A Response body is a single-use stream, so
+    // the obvious `try json() catch text()` pattern throws "body stream already
+    // read" from inside the catch — which then replaces the real server error
+    // with a misleading one and sends you debugging the wrong thing.
+    const raw = await response.text();
+    let detail: unknown = raw;
     try {
-      detail = (await response.json()).detail;
+      const parsed = JSON.parse(raw);
+      detail = parsed?.detail ?? parsed;
     } catch {
-      detail = await response.text();
+      // Not JSON — a proxy error page or an empty body. Keep the raw text.
     }
     throw new ApiError(describe(detail, response.status), response.status, detail);
   }
@@ -215,6 +221,23 @@ export interface EquityPoint {
   trade_id: string;
 }
 
+export interface Bar {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+export interface BarsResponse {
+  symbol: string;
+  name: string;
+  interval: string;
+  tick_size: string;
+  bars: Bar[];
+}
+
 export interface OrderResult {
   id: string;
   symbol: string;
@@ -235,6 +258,8 @@ export const api = {
   stats: () => request<Stats>('/stats'),
   equity: () => request<EquityPoint[]>('/equity'),
   playbook: () => request<SetupCard[]>('/playbook'),
+  bars: (symbol: string, interval: string) =>
+    request<BarsResponse>(`/bars/${symbol}?interval=${encodeURIComponent(interval)}`),
   evaluation: () => request<Evaluation>('/evaluation'),
 
   pushPrice: (symbol: string, price: string) =>

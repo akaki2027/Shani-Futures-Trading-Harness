@@ -200,14 +200,19 @@ class LLM:
                 },
             })
 
+        # The SDK types messages as a union of narrow TypedDicts that a plain
+        # dict literal cannot satisfy without spelling out the exact variant.
+        # The wire format is the same either way, and OpenRouter accepts models
+        # whose content shapes the SDK's own types do not cover.
+        messages: list[Any] = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": content},
+        ]
         try:
             client = OpenAI(api_key=key, base_url=base)
             response = client.chat.completions.create(
                 model=model, max_tokens=tokens, temperature=self.config.temperature,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": content},
-                ],
+                messages=messages,
             )
         except Exception as exc:
             raise LLMError(f"{self.config.provider} request failed: {exc}") from exc

@@ -21,6 +21,7 @@ import {
   type Trade,
 } from '@/lib/api';
 import { EquityChart } from './EquityChart';
+import { PriceChart } from './PriceChart';
 
 /* Icons are drawn, not borrowed from the emoji table — one stroke weight, one
    grid, sized to the type they sit beside. */
@@ -184,6 +185,12 @@ export function Portal() {
         </div>
 
         <div className="column">
+          {/* Price first: it is what a trader looks at before deciding
+              anything. Equity and history sit below it, in the order the
+              questions actually get asked — what is it doing, how am I doing,
+              what have I done. */}
+          <PriceChart symbol={selected} />
+
           <section className="region">
             <div className="region-head">
               <h2>Equity</h2>

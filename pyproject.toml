@@ -146,7 +146,17 @@ ignore = [
 "shani/market/tradingview_cdp.py" = ["UP031"]
 
 [tool.mypy]
-python_version = "3.11"
+# 3.12 here, while the package floor stays 3.11.
+#
+# numpy arrives transitively through tradingview-screener's pandas dependency,
+# and its bundled stubs use `type` statement syntax that only parses under
+# 3.12+. mypy hits that as a parse error before any per-module override can
+# suppress it, so the only lever is the target version.
+#
+# The 3.11 guarantee is not lost, it just moves: CI runs the full test suite on
+# 3.11, where 3.12-only syntax would fail at import. A type checker that cannot
+# run at all checks nothing.
+python_version = "3.12"
 strict = true
 warn_unreachable = true
 # Neither TradingView library ships type stubs, and the LLM SDKs are optional
@@ -163,3 +173,14 @@ module = [
 ]
 ignore_missing_imports = true
 implicit_reexport = true
+
+# numpy arrives transitively via tradingview-screener's pandas dependency. Its
+# bundled stubs use `type` statement syntax that only parses under Python 3.12+,
+# so type-checking against our 3.11 floor dies inside numpy before it reaches
+# any of our code. Shani never imports numpy directly; skipping it costs us no
+# coverage.
+[[tool.mypy.overrides]]
+module = ["numpy.*", "pandas.*", "tradingview_screener.*", "tradingview_ta.*"]
+follow_imports = "skip"
+ignore_errors = true
+ignore_missing_imports = true

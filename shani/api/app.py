@@ -37,6 +37,7 @@ from shani.config import Config, load_config
 from shani.db import Database
 from shani.ingest.webhook import WebhookRejected, ingest
 from shani.instruments import INSTRUMENTS, get_instrument
+from shani.market.bars import BarsProvider, BarsUnavailableError
 from shani.market.screener import ScreenerProvider, ScreenerUnavailableError
 from shani.memory.playbook import Playbook
 from shani.memory.stats import compute_stats, daily_pnl, equity_curve, evaluate_playbook
@@ -78,6 +79,7 @@ def build_app(config: Config | None = None) -> FastAPI:
     policy = RiskPolicy(config=cfg.risk, db=db, audit=audit)
     playbook = Playbook(db)
     screener = ScreenerProvider(cache_seconds=cfg.tradingview.screener_cache_seconds)
+    bars_provider = BarsProvider()
     agent = Agent(db, build_llm(cfg.model), audit)
     notifier = Notifier()
 
@@ -167,6 +169,36 @@ def build_app(config: Config | None = None) -> FastAPI:
                 for q in quotes
             ],
             "error": None,
+        }
+
+    @app.get("/api/bars/{symbol}", dependencies=auth)
+    def bars(symbol: str, interval: str = "15m") -> dict[str, Any]:
+        """OHLCV candles for charting.
+
+        Deliberately *not* sourced from Plane B: drawing an arbitrary symbol
+        there would mean changing the chart the trader is working from, and the
+        portal must never reach over and move it.
+        """
+        try:
+            candles = bars_provider.bars(symbol, interval)
+        except BarsUnavailableError as exc:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+        instrument = get_instrument(symbol)
+        return {
+            "symbol": instrument.root,
+            "name": instrument.name,
+            "interval": interval,
+            "tick_size": str(instrument.tick_size),
+            "bars": [
+                {
+                    "time": b.time, "open": b.open, "high": b.high,
+                    "low": b.low, "close": b.close, "volume": b.volume,
+                }
+                for b in candles
+            ],
         }
 
     @app.get("/api/analysis/{symbol}", dependencies=auth)
