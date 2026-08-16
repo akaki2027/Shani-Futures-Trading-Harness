@@ -21,6 +21,7 @@ import {
   type Trade,
 } from '@/lib/api';
 import { EquityChart } from './EquityChart';
+import { Connectors, News } from './News';
 import { PriceChart } from './PriceChart';
 import { Settings } from './Settings';
 
@@ -81,6 +82,7 @@ export function Portal() {
   const [notice, setNotice] = useState<string | null>(null);
   const [needsToken, setNeedsToken] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showConnectors, setShowConnectors] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -234,12 +236,17 @@ export function Portal() {
 
         <div className="column">
           <Ticket symbol={selected} quotes={quotes} onDone={refresh} />
+          {/* News sits below the ticket deliberately. It is context for a
+              decision, not a trigger for one — putting it where a proposal
+              goes would invite trading the headline. */}
+          <News onOpenConnectors={() => setShowConnectors(true)} />
           {evaluation && <PlaybookCheck evaluation={evaluation} />}
           <Playbook cards={playbook} />
         </div>
       </div>
 
       {showSettings && <Settings onClose={() => setShowSettings(false)} />}
+      {showConnectors && <Connectors onClose={() => setShowConnectors(false)} />}
 
       {openTrade && (
         <Interview

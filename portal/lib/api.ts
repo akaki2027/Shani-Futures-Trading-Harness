@@ -260,6 +260,52 @@ export interface CatalogueModel {
   modalities: string[];
 }
 
+export interface NewsArticle {
+  id: string;
+  title: string;
+  source: string;
+  url: string;
+  published_at: string;
+  summary: string;
+  symbols: string[];
+  lean: string;
+  lean_label: string;
+  score: number;
+  /** 0–1. Drives colour intensity, so a weak read renders pale. */
+  confidence: number;
+  rationale: string;
+  age_minutes: number;
+}
+
+export interface NewsConnector {
+  id: string;
+  name: string;
+  description: string;
+  requires_key: boolean;
+  key_env_var: string | null;
+  signup_url: string | null;
+  available: boolean;
+  ok?: boolean;
+  count?: number;
+  detail?: string | null;
+}
+
+export interface NewsPayload {
+  items: NewsArticle[];
+  digest: {
+    lean: string;
+    lean_label: string;
+    score: number;
+    bullish: number;
+    bearish: number;
+    neutral: number;
+    unrated: number;
+    headline: string;
+  };
+  connectors: NewsConnector[];
+  classified: boolean;
+}
+
 export interface OrderResult {
   id: string;
   symbol: string;
@@ -280,6 +326,17 @@ export const api = {
   stats: () => request<Stats>('/stats'),
   equity: () => request<EquityPoint[]>('/equity'),
   playbook: () => request<SetupCard[]>('/playbook'),
+  news: (refresh = false) =>
+    request<NewsPayload>(`/news${refresh ? '?refresh=true' : ''}`),
+
+  newsConnectors: () => request<NewsConnector[]>('/news/connectors'),
+
+  saveConnector: (id: string, values: Record<string, string>) =>
+    request<{ connectors: NewsConnector[] }>(`/news/connectors/${id}`, {
+      method: 'POST',
+      body: JSON.stringify({ values }),
+    }),
+
   modelSettings: () => request<ModelSettings>('/settings/model'),
 
   modelCatalogue: (provider = 'openrouter', refresh = false) =>

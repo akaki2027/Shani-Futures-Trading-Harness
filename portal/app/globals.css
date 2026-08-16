@@ -45,6 +45,20 @@
   --up-wash: rgba(111, 155, 106, 0.14);
   --down-wash: rgba(181, 106, 94, 0.14);
 
+  /* News lean. Five steps from strongly bearish to strongly bullish, plus a
+     grey for unrated.
+     These are deliberately the P&L greens and reds rather than a second colour
+     system: a headline that argues the market goes down should be the same red
+     as a losing trade, or the eye has to learn two vocabularies on one screen.
+     The pale variants carry low-confidence reads, so a guess never renders with
+     the same force as a rate decision. */
+  --lean-strong-bear: #b5514a;
+  --lean-bear: rgba(181, 106, 94, 0.55);
+  --lean-neutral: #b08a3a;
+  --lean-bull: rgba(111, 155, 106, 0.55);
+  --lean-strong-bull: #5f9a58;
+  --lean-unrated: rgba(236, 231, 221, 0.22);
+
   --line: rgba(236, 231, 221, 0.09);
   --line-strong: rgba(236, 231, 221, 0.16);
 
@@ -475,6 +489,119 @@ tbody tr:hover {
   bottom: 0;
   width: 1px;
   background: var(--line-strong);
+}
+
+/* ── News ─────────────────────────────────────────────────────────────────
+ * Colour answers one question in under a second: does this give the market a
+ * reason to go up or down? The lean is carried on a left rail rather than as a
+ * background wash, so a dense list stays readable and the colours read as a
+ * column you can scan vertically. */
+
+.news-item {
+  display: grid;
+  grid-template-columns: 3px 1fr;
+  gap: 0.7rem;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.news-rail {
+  border-radius: 2px;
+  background: var(--lean-unrated);
+}
+.news-rail[data-lean='strong_bearish'] { background: var(--lean-strong-bear); }
+.news-rail[data-lean='bearish']        { background: var(--lean-bear); }
+.news-rail[data-lean='neutral']        { background: var(--lean-neutral); }
+.news-rail[data-lean='bullish']        { background: var(--lean-bull); }
+.news-rail[data-lean='strong_bullish'] { background: var(--lean-strong-bull); }
+
+.news-title {
+  color: var(--fg-000);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  text-decoration: none;
+  display: block;
+}
+.news-title:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.news-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: baseline;
+  margin-top: 0.2rem;
+  font-size: 0.6875rem;
+  color: var(--fg-300);
+}
+
+.news-why {
+  font-size: 0.6875rem;
+  color: var(--fg-200);
+  margin-top: 0.2rem;
+  font-style: italic;
+}
+
+/* The desk-level read. A single line, coloured, above the list. */
+.digest {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 3px;
+  border: 1px solid var(--line-strong);
+  background: var(--ground-100);
+  font-size: 0.8125rem;
+  line-height: 1.4;
+}
+.digest[data-lean='strong_bearish'] { border-color: var(--lean-strong-bear); background: var(--down-wash); }
+.digest[data-lean='bearish']        { border-color: var(--lean-bear); }
+.digest[data-lean='neutral']        { border-color: var(--lean-neutral); }
+.digest[data-lean='bullish']        { border-color: var(--lean-bull); }
+.digest[data-lean='strong_bullish'] { border-color: var(--lean-strong-bull); background: var(--up-wash); }
+
+.digest-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--lean-unrated);
+}
+.digest-dot[data-lean='strong_bearish'] { background: var(--lean-strong-bear); }
+.digest-dot[data-lean='bearish']        { background: var(--lean-bear); }
+.digest-dot[data-lean='neutral']        { background: var(--lean-neutral); }
+.digest-dot[data-lean='bullish']        { background: var(--lean-bull); }
+.digest-dot[data-lean='strong_bullish'] { background: var(--lean-strong-bull); }
+
+.connector-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.75rem;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  font-size: 0.625rem;
+  color: var(--fg-300);
+  padding: 0.4rem 0 0.6rem;
+}
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.legend i {
+  width: 10px;
+  height: 3px;
+  border-radius: 2px;
+  display: inline-block;
 }
 
 /* ── Interview ───────────────────────────────────────────────────────────── */

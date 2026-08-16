@@ -44,6 +44,7 @@ from shani.market.screener import ScreenerProvider, ScreenerUnavailableError
 from shani.memory.playbook import Playbook
 from shani.memory.stats import compute_stats, daily_pnl, equity_curve, evaluate_playbook
 from shani.models import Order, OrderType, Side
+from shani.news.service import NewsService
 from shani.notify import Notifier
 from shani.risk.policy import RiskPolicy
 from shani.settings_store import (
@@ -76,6 +77,11 @@ class PriceRequest(BaseModel):
     price: Decimal
 
 
+class ConnectorRequest(BaseModel):
+    #: Env-var name to value. Write-only, stored in .env and never echoed back.
+    values: dict[str, str]
+
+
 class ModelSettingsRequest(BaseModel):
     provider: Literal["anthropic", "openai", "openrouter", "ollama", "none"]
     triage_model: str = ""
@@ -98,6 +104,7 @@ def build_app(config: Config | None = None) -> FastAPI:
     screener = ScreenerProvider(cache_seconds=cfg.tradingview.screener_cache_seconds)
     bars_provider = BarsProvider()
     model_catalogue = ModelCatalogue()
+    news_service = NewsService()
     agent = Agent(db, build_llm(cfg.model), audit)
     notifier = Notifier()
 
@@ -214,6 +221,56 @@ def build_app(config: Config | None = None) -> FastAPI:
         """Round-trip a real completion so 'saved' and 'working' are distinguishable."""
         healthy, detail = build_llm(load_config().model).check()
         return {"ok": healthy, "detail": detail}
+
+    # ── news ─────────────────────────────────────────────────────────────────
+
+    @app.get("/api/news", dependencies=auth)
+    def news(refresh: bool = False, limit: int = 40) -> dict[str, Any]:
+        """Aggregated headlines with a directional read on each.
+
+        Partial failure is reported per connector rather than hidden. A feed
+        that quietly shows less than the trader believes it is showing is worse
+        than one that says "Reddit is down".
+        """
+        return news_service.fetch(
+            cfg.tradingview.watchlist,
+            build_llm(load_config().model),
+            limit=limit,
+            refresh=refresh,
+        )
+
+    @app.get("/api/news/connectors", dependencies=auth)
+    def news_connectors() -> list[dict[str, Any]]:
+        return news_service.connectors()
+
+    @app.post("/api/news/connectors/{connector_id}", dependencies=auth)
+    def configure_connector(connector_id: str, body: ConnectorRequest) -> dict[str, Any]:
+        """Store a connector credential. Write-only, same as the model key."""
+        known = {c["id"]: c for c in news_service.connectors()}
+        if connector_id not in known:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, f"No connector {connector_id!r}")
+
+        connector = known[connector_id]
+        if not connector["requires_key"]:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, f"{connector['name']} needs no credentials."
+            )
+
+        updates = {k: v.strip() for k, v in body.values.items() if v and v.strip()}
+        if not updates:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "No values supplied.")
+
+        write_env_values(updates)
+        for key, value in updates.items():
+            os.environ[key] = value
+
+        news_service.invalidate()
+        audit.record(
+            EventType.CONFIG_CHANGED,
+            f"News connector configured — {connector['name']}",
+            payload={"connector": connector_id, "keys": sorted(updates)},
+        )
+        return {"connectors": news_service.connectors()}
 
     # ── market data (Plane A) ────────────────────────────────────────────────
 
