@@ -77,21 +77,42 @@ exactly one domain: your trades.
 
 ## Feature status
 
-Shani is **alpha**. This table is the honest state of things — see
-[what is not verified](#what-is-not-verified) for the details.
+Shani is **alpha**. The column that matters is *how* something was checked, not
+whether it exists — "it has unit tests" and "someone ran it" are very different
+claims, and conflating them is how this project shipped a portal that looked
+finished and returned empty panels.
 
-| | Status |
-|---|---|
-| Futures paper broker (ES/NQ/CL/GC + micros) | ✅ Working, tested |
-| Trade journal + post-trade interview | ✅ Working |
-| Setup-card extraction and retrieval | ✅ Working |
-| Plane A — market data, screeners, TA | ✅ Working |
-| Plane B — TradingView Desktop bridge | ✅ Verified against Desktop 3.3.0 |
-| Plane C — Pine alert webhooks | ⚠️ Built, needs a tunnel to verify end-to-end |
-| Portal — charts, ticket, stats | ✅ Working |
-| NinjaTrader execution | 📋 Documented stub, not implemented |
-| Live broker execution | 🔒 Disabled by design |
-| Mobile companion app | 📋 Designed for, not built |
+| | Status | How it was checked |
+|---|---|---|
+| Futures paper broker (ES/NQ/CL/GC + micros) | ✅ | Unit + seam tests; P&L hand-verified against exchange specs |
+| Risk gate + audit log | ✅ | Unit + seam tests |
+| Trade journal + post-trade interview | ✅ | Seam test drives the full HTTP path |
+| Setup-card extraction and retrieval | ✅ | Run against a live model end to end |
+| Plane A — market data, screeners, TA | ✅ | Live fetch |
+| Plane B — TradingView Desktop bridge | ✅ | Live read from Desktop 3.3.0 (Store build) |
+| Plane C — Pine alert webhooks | ⚠️ | HMAC + parsing tested locally; **no real alert from TradingView's servers yet** |
+| Portal — price charts, ticket, stats | ✅ | Driven in a browser; contract-tested against the API |
+| Price/OHLCV charts | ✅ | Live data, multiple symbols and timeframes |
+| NinjaTrader execution | 📋 | Documented stub. Not implemented |
+| Live broker execution | 🔒 | Disabled by design, and structurally unreachable |
+| Mobile companion app | 📋 | Schema and API shaped for it; app not built |
+
+### Verifying it yourself
+
+```bash
+uv run shani doctor   # can each component work?
+uv run shani verify   # do they work together?
+```
+
+`doctor` checks components in isolation. `verify` walks the whole path against a
+running server — every portal endpoint, a real paper trade opened and closed
+with the P&L checked against the contract spec, the risk gate refusing a
+stopless entry, and the model provider answering.
+
+That distinction exists because **every bug that reached a user in this
+project's first week lived at a seam between components, while every unit test
+stayed green.** `tests/test_integration.py` is the permanent version of that
+lesson.
 
 ## The three planes
 

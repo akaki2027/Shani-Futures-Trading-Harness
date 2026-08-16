@@ -71,7 +71,31 @@ development, build against the paper broker — which is the point of it.
 
 See [docs/safety.md](docs/safety.md).
 
-### 5. Tests must not depend on the network, the clock, or market hours
+### 5. Changes that cross a boundary need a seam test
+
+`tests/test_integration.py` exists because of a specific, repeated failure: this
+project's first week produced a string of bugs that all lived at boundaries
+between components, while every unit test stayed green the entire time.
+
+Config didn't override from the environment. The portal called a path the API
+didn't serve. The API client read a response body twice and replaced every real
+error with a misleading one. A key saved to `.env` was never read back. The
+TradingView client used a global that doesn't exist on the page Desktop loads.
+
+Not one of those was subtle, and not one was catchable by a suite that only ever
+exercises a single module.
+
+**The rule: if a failure could make the portal show wrong or empty data while
+every unit test stays green, it needs a test in `test_integration.py`.**
+
+Before opening a PR that touches the API, the portal client, or config:
+
+```bash
+uv run pytest tests/test_integration.py
+uv run shani verify        # against a running server
+```
+
+### 6. Tests must not depend on the network, the clock, or market hours
 
 The paper broker takes time and price as arguments precisely so tests can replay
 an exact sequence. Tests that hit live endpoints or need TradingView Desktop go

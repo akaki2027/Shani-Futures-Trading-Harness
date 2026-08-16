@@ -329,6 +329,162 @@ def serve(
 
 
 @app.command()
+def verify(
+    url: Annotated[str | None, typer.Option(help="Base URL of a running server.")] = None,
+) -> None:
+    """Walk the full path against a running server and fail loudly.
+
+    ``doctor`` checks that each component *can* work. This checks that they
+    actually work *together*, which is a different question and the one that
+    kept being answered wrongly: every bug that reached a user in this project's
+    first week lived at a seam, while every unit test stayed green.
+
+    Placing a real (paper) trade is the point — it exercises the risk gate, the
+    broker, position accounting, the journal, and the statistics in one pass.
+    """
+    import httpx
+
+    config = load_config()
+    base = url or f"http://{config.server.host}:{config.server.port}"
+    token = config.server.api_token
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    client = httpx.Client(base_url=base, headers=headers, timeout=30)
+
+    console.print(f"\n[bold]shani · verify[/bold]  →  {base}")
+    console.print("─" * 62)
+
+    failures = 0
+
+    def step(label: str, fn: object) -> object:
+        nonlocal failures
+        try:
+            result = fn()  # type: ignore[operator]
+        except Exception as exc:
+            failures += 1
+            console.print(f"{FAIL}  {label}")
+            console.print(f"        {str(exc)[:150]}")
+            return None
+        console.print(f"{OK}  {label}")
+        return result
+
+    def reachable() -> str:
+        r = client.get("/api/health")
+        r.raise_for_status()
+        return str(r.json()["broker"])
+
+    broker = step("server reachable", reachable)
+    if broker is None:
+        console.print("─" * 62)
+        console.print("[red]Server is not answering. Start it with [bold]shani serve[/bold].[/red]\n")
+        raise typer.Exit(1)
+
+    def portal_calls() -> int:
+        paths = ["/api/watchlist", "/api/account", "/api/positions", "/api/trades",
+                 "/api/stats", "/api/equity", "/api/playbook", "/api/evaluation",
+                 "/api/settings/model"]
+        bad = [(p, client.get(p).status_code) for p in paths]
+        broken = [(p, c) for p, c in bad if c != 200]
+        if broken:
+            raise RuntimeError(f"failing endpoints: {broken}")
+        return len(paths)
+
+    step("every portal endpoint answers", portal_calls)
+
+    def round_trip() -> str:
+        """A real paper trade, opened and closed.
+
+        The expected P&L is derived from the *actual* fill price rather than
+        hardcoded, because slippage and commission are configurable. A check
+        that only passes on the author's settings is not a check.
+        """
+        from decimal import Decimal
+
+        from shani.instruments import get_instrument
+
+        px = Decimal("5000.00")
+        target = px + 20
+        client.post("/api/price", json={"symbol": "ES", "price": str(px)})
+        order = client.post("/api/orders", json={
+            "symbol": "ES", "side": "buy", "quantity": 1,
+            "stop_loss": str(px - 10), "take_profit": str(target),
+        })
+        if order.status_code != 201:
+            raise RuntimeError(f"order rejected: {order.json().get('detail')}")
+
+        fill = order.json().get("average_fill_price")
+        if fill is None:
+            raise RuntimeError("order reported no fill price")
+
+        client.post("/api/price", json={"symbol": "ES", "price": str(target)})
+        if client.get("/api/positions").json():
+            raise RuntimeError("position did not close when price reached the target")
+
+        trade = client.get("/api/trades", params={"limit": 1}).json()[0]
+        es = get_instrument("ES")
+        expected_gross = es.pnl(Decimal(fill), target, 1, is_long=True)
+        expected_net = expected_gross - es.commission(1)
+
+        if Decimal(trade["gross_pnl"]) != expected_gross:
+            raise RuntimeError(
+                f"gross P&L wrong: filled {fill}, exited {target}, "
+                f"expected {expected_gross}, got {trade['gross_pnl']}"
+            )
+        if Decimal(trade["net_pnl"]) != expected_net:
+            raise RuntimeError(
+                f"net P&L wrong: expected {expected_net}, got {trade['net_pnl']}"
+            )
+        return str(trade["id"])
+
+    trade_id = step("paper trade: fill → target → close, P&L exact", round_trip)
+
+    if trade_id:
+        def interview() -> bool:
+            r = client.post(f"/api/trades/{trade_id}/interview",
+                            json={"index": 0, "answer": "shani verify"})
+            r.raise_for_status()
+            return bool(r.json()["has_interview"])
+
+        step("interview attaches and records", interview)
+
+    def risk_gate() -> str:
+        r = client.post("/api/orders", json={
+            "symbol": "ES", "side": "buy", "quantity": 1,
+        })
+        if r.status_code != 422:
+            raise RuntimeError(f"a stopless entry was not refused (got {r.status_code})")
+        return str(r.json()["detail"]["rule"])
+
+    step("risk gate refuses a stopless entry", risk_gate)
+
+    def money_types() -> str:
+        body = client.get("/api/account").json()
+        floats = [k for k, v in body.items() if isinstance(v, float)]
+        if floats:
+            raise RuntimeError(f"money serialised as float: {floats}")
+        return "all strings"
+
+    step("money never crosses the wire as a float", money_types)
+
+    def model() -> str:
+        r = client.post("/api/settings/model/test")
+        body = r.json()
+        if not body.get("ok"):
+            raise RuntimeError(body.get("detail", "model not reachable"))
+        return str(body["detail"])
+
+    if config.model.enabled:
+        step("model provider responds", model)
+    else:
+        console.print(f"{OK}  model provider — disabled in config")
+
+    console.print("─" * 62)
+    if failures:
+        console.print(f"[red]{failures} check(s) failed.[/red]\n")
+        raise typer.Exit(1)
+    console.print("[green]every seam healthy.[/green]\n")
+
+
+@app.command()
 def stats() -> None:
     """Print performance statistics to the terminal."""
     from shani.db import Database
