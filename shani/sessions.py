@@ -245,15 +245,22 @@ def next_open(dt: datetime, instrument: Instrument) -> datetime:
     """The next moment the market opens after ``dt``.
 
     Used to tell a user *when* their rejected after-hours order could actually
-    have been filled, which is more useful than "market closed". Steps in
-    fifteen-minute increments and gives up after two weeks rather than looping
-    forever if the holiday table ever swallows a whole fortnight.
+    have been filled, which is more useful than "market closed".
+
+    Steps one minute at a time from a truncated start, so the answer lands on
+    the real boundary. An earlier version stepped in fifteen-minute increments
+    from the current time, which meant a query at 15:24 on a Sunday reported the
+    reopen as 18:09 rather than 18:00 — a plausible-looking number that is
+    simply wrong, and the kind a trader would set an alarm by.
+
+    Gives up after two weeks rather than looping forever if the holiday table
+    ever swallows a whole fortnight.
     """
     et = to_eastern(dt)
     limit = et + timedelta(days=14)
     probe = et.replace(second=0, microsecond=0)
     while probe < limit:
-        probe += timedelta(minutes=15)
+        probe += timedelta(minutes=1)
         if is_market_open(probe, instrument):
             return probe
     raise RuntimeError(

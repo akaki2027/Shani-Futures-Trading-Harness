@@ -160,6 +160,23 @@ class TestNextOpen:
         assert result.date().isoformat() == "2026-03-15"
         assert result.hour == 18
 
+    def test_lands_exactly_on_the_boundary_not_a_stepping_grid(self) -> None:
+        """The answer must be the real reopen time, to the minute.
+
+        An earlier implementation stepped forward in fifteen-minute increments
+        from the current time, so a query at 15:24 on a Sunday reported the
+        reopen as 18:09. Plausible-looking, wrong, and precisely the sort of
+        number someone sets an alarm by.
+        """
+        result = next_open(et(2026, 8, 16, 15, 24), ES)
+        assert (result.hour, result.minute) == (18, 0)
+        assert result.date().isoformat() == "2026-08-16"
+
+    def test_boundary_is_exact_from_any_starting_minute(self) -> None:
+        for minute in (1, 7, 23, 38, 59):
+            result = next_open(et(2026, 8, 16, 15, minute), ES)
+            assert (result.hour, result.minute) == (18, 0), f"wrong from :{minute:02d}"
+
     def test_result_is_actually_open(self) -> None:
         for start in (et(2026, 3, 14, 12, 0), et(2026, 3, 10, 17, 30),
                       et(2026, 12, 25, 10, 0)):

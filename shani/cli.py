@@ -354,15 +354,29 @@ def verify(
     console.print("─" * 62)
 
     failures = 0
+    skipped = 0
+
+    class Skip(Exception):
+        """Not applicable right now, and not a fault.
+
+        Distinct from a failure on purpose. A verification command that goes red
+        every weekend because the market is shut teaches people to ignore it,
+        and then it is worth nothing on the Tuesday it finds something real.
+        """
 
     def step(label: str, fn: object) -> object:
-        nonlocal failures
+        nonlocal failures, skipped
         try:
             result = fn()  # type: ignore[operator]
+        except Skip as reason:
+            skipped += 1
+            console.print(f"{WARN}  {label}")
+            console.print(f"        skipped — {reason}")
+            return None
         except Exception as exc:
             failures += 1
             console.print(f"{FAIL}  {label}")
-            console.print(f"        {str(exc)[:150]}")
+            console.print(f"        {str(exc)[:180]}")
             return None
         console.print(f"{OK}  {label}")
         return result
@@ -409,7 +423,12 @@ def verify(
             "stop_loss": str(px - 10), "take_profit": str(target),
         })
         if order.status_code != 201:
-            raise RuntimeError(f"order rejected: {order.json().get('detail')}")
+            detail = str(order.json().get("detail"))
+            # A closed market is the broker working correctly, not a broken
+            # seam. Matched narrowly so any *other* rejection still fails.
+            if "not trading at" in detail:
+                raise Skip(detail.split(";")[-1].strip() or "market closed")
+            raise RuntimeError(f"order rejected: {detail}")
 
         fill = order.json().get("average_fill_price")
         if fill is None:
@@ -481,6 +500,14 @@ def verify(
     if failures:
         console.print(f"[red]{failures} check(s) failed.[/red]\n")
         raise typer.Exit(1)
+    if skipped:
+        console.print(
+            f"[green]every seam healthy[/green] "
+            f"[dim]({skipped} skipped — set "
+            f"SHANI_BROKER__ENFORCE_MARKET_HOURS=false to exercise them "
+            f"outside session hours)[/dim]\n"
+        )
+        return
     console.print("[green]every seam healthy.[/green]\n")
 
 
