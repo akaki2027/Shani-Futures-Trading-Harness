@@ -24,7 +24,14 @@ import yaml
 
 from shani.config import CONFIG_PATH, Config
 
-__all__ = ["ENV_PATH", "mask_key", "read_model_env", "write_config_values", "write_env_values"]
+__all__ = [
+    "ENV_PATH",
+    "mask_key",
+    "read_env_value",
+    "read_model_env",
+    "write_config_values",
+    "write_env_values",
+]
 
 #: ``.env`` lives beside the project, not in the platform data directory —
 #: it is a developer-facing file and people expect it next to the code.
@@ -58,6 +65,18 @@ def _read_env(path: Path) -> dict[str, str]:
         key, _, value = stripped.partition("=")
         values[key.strip()] = value.strip()
     return values
+
+
+def read_env_value(key: str, path: Path | None = None) -> str | None:
+    """Read one value from ``.env``.
+
+    Needed because nothing puts ``.env`` into the process environment. Pydantic
+    reads it when constructing settings, but an API key is not a settings field
+    — it is looked up by the provider SDKs from ``os.environ``. Without this, a
+    key saved through the portal works until the next restart and then silently
+    stops, which is a maddening failure to diagnose.
+    """
+    return _read_env(path or ENV_PATH).get(key) or None
 
 
 def write_env_values(updates: dict[str, str], path: Path | None = None) -> None:

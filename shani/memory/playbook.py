@@ -231,20 +231,39 @@ class Playbook:
                     score += 100
                 elif needle in card.slug or card.slug in needle:
                     score += 50
+                elif _shares_words(needle, card.slug):
+                    # "overnight-high-rejection" and "failed-overnight-high-reclaim"
+                    # are the same setup under two names — the alert is named by
+                    # the trader, the card by the extraction step, and they will
+                    # rarely agree exactly.
+                    score += 40
             if signal.symbol in card.instruments:
                 score += 20
             if signal.timeframe and signal.timeframe in card.timeframes:
                 score += 10
-            if score:
+
+            # Instrument overlap alone is not a match. Every ES card would
+            # "match" every ES signal, and the agent would then present an
+            # unrelated setup's statistics as this setup's history — which is
+            # exactly the false confidence this project exists to avoid.
+            if score > 20:
                 scored.append((score, card))
 
-        # Fall back to full-text search over the card corpus when nothing
-        # matched structurally.
+        # Fall back to full-text search when nothing matched structurally, but
+        # hold it to the same two-word bar. FTS will happily return a card for
+        # a single common word — "opening" links "opening drive" to "opening
+        # range break", which are different setups — and letting that through
+        # would reintroduce exactly the false match the scoring above excludes.
         if not scored and (signal.strategy_name or signal.message):
-            query = _fts_query(f"{signal.strategy_name or ''} {signal.message}")
+            text = f"{signal.strategy_name or ''} {signal.message}"
+            query = _fts_query(text)
             if query:
+                needle = slugify(text)
                 for card in self.db.search_setups(query, limit=limit):
-                    scored.append((5, card))
+                    if _shares_words(needle, card.slug) or _shares_words(
+                        needle, slugify(card.name)
+                    ):
+                        scored.append((5, card))
 
         scored.sort(key=lambda pair: pair[0], reverse=True)
         matched = tuple(card for _, card in scored[:limit])
@@ -269,6 +288,25 @@ class Playbook:
 
 def slugify(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+
+
+#: Words too generic to indicate two setups are the same thing.
+_STOPWORDS = frozenset({
+    "the", "a", "an", "and", "or", "of", "on", "in", "at", "to", "for",
+    "setup", "trade", "entry", "long", "short", "buy", "sell",
+})
+
+
+def _shares_words(a: str, b: str) -> bool:
+    """Do two slugs share at least two meaningful words?
+
+    Two is deliberate. One shared word links "opening-drive" to "opening-range",
+    which are different setups; two links "overnight-high-rejection" to
+    "failed-overnight-high-reclaim", which are the same one described twice.
+    """
+    words_a = {w for w in a.split("-") if len(w) > 2 and w not in _STOPWORDS}
+    words_b = {w for w in b.split("-") if len(w) > 2 and w not in _STOPWORDS}
+    return len(words_a & words_b) >= 2
 
 
 def _fts_query(text: str) -> str:

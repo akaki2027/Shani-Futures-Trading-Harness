@@ -76,6 +76,24 @@ class LLM:
     config: ModelConfig
     api_key: str | None = None
 
+    def _resolve_key(self, env_var: str) -> str | None:
+        """Find the API key, in order of precedence.
+
+        The ``.env`` fallback is not redundant. Nothing loads ``.env`` into the
+        process environment — pydantic reads it when building settings, but an
+        API key is not a settings field, it is looked up from ``os.environ`` by
+        the provider SDKs. Without this lookup a key saved through the portal
+        works until the next restart and then silently stops.
+        """
+        if self.api_key:
+            return self.api_key
+        from_env = os.environ.get(env_var)
+        if from_env:
+            return from_env
+        from shani.settings_store import read_env_value
+
+        return read_env_value(env_var)
+
     def model_for(self, tier: Tier) -> str:
         return self.config.triage_model if tier == "triage" else self.config.reasoning_model
 
@@ -137,9 +155,12 @@ class LLM:
                 "The anthropic package is not installed. Run: uv sync --extra anthropic"
             ) from exc
 
-        key = self.api_key or os.environ.get("ANTHROPIC_API_KEY")
+        key = self._resolve_key("ANTHROPIC_API_KEY")
         if not key:
-            raise LLMUnavailableError("ANTHROPIC_API_KEY is not set.")
+            raise LLMUnavailableError(
+                "ANTHROPIC_API_KEY is not set. Add it in the portal's model "
+                "settings, or export it before starting the server."
+            )
 
         content: list[dict[str, Any]] = []
         for image in images or []:
@@ -181,9 +202,12 @@ class LLM:
         env_key = (
             "OPENROUTER_API_KEY" if self.config.provider == "openrouter" else "OPENAI_API_KEY"
         )
-        key = self.api_key or os.environ.get(env_key)
+        key = self._resolve_key(env_key)
         if not key:
-            raise LLMUnavailableError(f"{env_key} is not set.")
+            raise LLMUnavailableError(
+                f"{env_key} is not set. Add it in the portal's model settings, "
+                f"or export it before starting the server."
+            )
 
         base = self.config.base_url or (
             "https://openrouter.ai/api/v1" if self.config.provider == "openrouter" else None

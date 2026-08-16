@@ -153,10 +153,45 @@ class TestRecall:
                         strategy_name="Opening Drive Fade")
         assert playbook.recall(signal).setups[0].slug == "opening-drive-fade"
 
-    def test_matches_on_instrument_overlap(self, db: Database, playbook: Playbook) -> None:
+    def test_instrument_overlap_alone_is_not_a_match(
+        self, db: Database, playbook: Playbook
+    ) -> None:
+        """Otherwise every ES card matches every ES signal, and the agent
+        presents an unrelated setup's statistics as this setup's history."""
         playbook.create(SetupCard(name="ES scalp", slug="es-scalp", instruments=["ES"]))
         signal = Signal(source=SignalSource.PINE_WEBHOOK, symbol="ES")
+        assert playbook.recall(signal).setups == ()
+
+    def test_instrument_plus_timeframe_is_a_match(
+        self, db: Database, playbook: Playbook
+    ) -> None:
+        playbook.create(
+            SetupCard(name="ES scalp", slug="es-scalp", instruments=["ES"], timeframes=["5"])
+        )
+        signal = Signal(source=SignalSource.PINE_WEBHOOK, symbol="ES", timeframe="5")
         assert len(playbook.recall(signal).setups) == 1
+
+    def test_matches_a_setup_named_differently_by_the_alert(
+        self, db: Database, playbook: Playbook
+    ) -> None:
+        """The alert is named by the trader, the card by the extraction step.
+        They rarely agree exactly, and 'no matching history' would be a lie."""
+        playbook.create(
+            SetupCard(name="Failed overnight high reclaim",
+                      slug="failed-overnight-high-reclaim", instruments=["ES"])
+        )
+        signal = Signal(source=SignalSource.PINE_WEBHOOK, symbol="ES",
+                        strategy_name="Overnight high rejection")
+        assert len(playbook.recall(signal).setups) == 1
+
+    def test_one_shared_word_is_not_enough(self, db: Database, playbook: Playbook) -> None:
+        """'opening-drive' and 'opening-range' are different setups."""
+        playbook.create(
+            SetupCard(name="Opening drive", slug="opening-drive", instruments=["ES"])
+        )
+        signal = Signal(source=SignalSource.PINE_WEBHOOK, symbol="ES",
+                        strategy_name="Opening range break")
+        assert playbook.recall(signal).setups == ()
 
     def test_no_history_is_reported_explicitly(self, playbook: Playbook) -> None:
         """Silence makes an agent invent context; 'no history' makes it say so."""
@@ -299,9 +334,40 @@ class TestAgent:
             "side": "buy", "quantity": 1, "reasoning": "", "confidence": 0.6,
             "cited_setups": ["ORB"],
         })
-        signal = Signal(source=SignalSource.PINE_WEBHOOK, symbol="ES", price=Decimal("5000"))
+        signal = Signal(source=SignalSource.PINE_WEBHOOK, symbol="ES",
+                        price=Decimal("5000"), strategy_name="ORB")
         proposal = agent.propose(signal)
         assert proposal is not None and proposal.is_grounded
+
+    def test_citation_matches_the_card_name_not_only_its_slug(self, db: Database) -> None:
+        """The prompt shows both forms, so a model may cite either. Requiring
+        exact slug equality reports 'no matching history' when history was in
+        fact retrieved and used."""
+        Playbook(db).create(
+            SetupCard(name="Failed Overnight High Reclaim",
+                      slug="failed-overnight-high-reclaim", instruments=["ES"])
+        )
+        agent = self._agent(db, {
+            "side": "sell", "quantity": 1, "reasoning": "", "confidence": 0.6,
+            "cited_setups": ["Failed Overnight High Reclaim"],
+        })
+        signal = Signal(source=SignalSource.PINE_WEBHOOK, symbol="ES",
+                        price=Decimal("5000"),
+                        strategy_name="failed overnight high reclaim")
+        proposal = agent.propose(signal)
+        assert proposal is not None and proposal.is_grounded
+
+    def test_a_hallucinated_citation_does_not_ground_a_proposal(self, db: Database) -> None:
+        """Only cards actually retrieved can be cited."""
+        Playbook(db).create(SetupCard(name="ORB", slug="orb", instruments=["ES"]))
+        agent = self._agent(db, {
+            "side": "buy", "quantity": 1, "reasoning": "", "confidence": 0.9,
+            "cited_setups": ["Some Setup I Invented"],
+        })
+        signal = Signal(source=SignalSource.PINE_WEBHOOK, symbol="ES",
+                        price=Decimal("5000"), strategy_name="ORB")
+        proposal = agent.propose(signal)
+        assert proposal is not None and not proposal.is_grounded
 
     def test_quantity_is_capped_by_the_risk_setting(self, db: Database) -> None:
         agent = self._agent(db, {
@@ -324,7 +390,7 @@ class TestAgent:
                        "cited_setups": []})
         agent = Agent(db, llm, AuditLog(db))
         agent.propose(Signal(source=SignalSource.PINE_WEBHOOK, symbol="ES",
-                             price=Decimal("5000")))
+                             price=Decimal("5000"), strategy_name="ORB"))
         assert "Break of the opening range" in llm.prompts[0]
 
     def test_interview_questions_are_attached_on_close(self, db: Database) -> None:

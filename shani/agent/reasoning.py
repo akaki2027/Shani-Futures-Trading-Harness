@@ -30,6 +30,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 from typing import Any
+from uuid import UUID
 
 from shani.agent.llm import LLM, LLMError, fence
 from shani.audit import AuditLog, EventType
@@ -147,11 +148,7 @@ class Agent:
         stop = _price(result.get("stop_loss"), instrument)
         target = _price(result.get("take_profit"), instrument)
 
-        cited = [
-            card.id
-            for card in recall.setups
-            if card.slug in {slugify(str(s)) for s in result.get("cited_setups") or []}
-        ]
+        cited = _match_citations(recall.setups, result.get("cited_setups") or [])
 
         risk = None
         if stop is not None and signal.price is not None:
@@ -345,6 +342,38 @@ class Agent:
             trade_id=trade.id,
         )
         return card
+
+
+def _match_citations(setups: tuple[SetupCard, ...], cited: list[Any]) -> list[UUID]:
+    """Resolve the model's citations against the cards it was actually shown.
+
+    Exact slug equality is too brittle to be the only rule. The prompt shows a
+    card as ``[failed-overnight-high-reclaim] Failed Overnight High Reclaim``,
+    and a model will legitimately cite either form — or the name with different
+    capitalisation, or with the bracketed slug included. Failing to match any of
+    those marks the proposal ungrounded, which then tells the trader "no
+    matching history" when history was retrieved and used. That is a worse lie
+    than the reverse.
+
+    Only cards that were genuinely retrieved can be matched, so this cannot
+    invent a citation the model hallucinated.
+    """
+    if not cited:
+        return []
+
+    matched: list[UUID] = []
+    needles = [slugify(str(item)) for item in cited if str(item).strip()]
+
+    for card in setups:
+        card_slug = card.slug
+        name_slug = slugify(card.name)
+        for needle in needles:
+            if not needle:
+                continue
+            if needle in {card_slug, name_slug} or needle in card_slug or card_slug in needle:
+                matched.append(card.id)
+                break
+    return matched
 
 
 def _side(value: Any) -> Side | None:
