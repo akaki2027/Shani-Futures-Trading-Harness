@@ -8,8 +8,35 @@ import {
 } from 'lightweight-charts';
 import { useEffect, useRef, useState } from 'react';
 import { api, type Bar } from '@/lib/api';
+import { ema, globexSessionKey, type LinePoint, sma, vwap } from '@/lib/indicators';
 
 const INTERVALS = ['5m', '15m', '1h', '4h', '1d'] as const;
+
+/** Overlays, in draw order. Colours are distinct from the P&L greens and reds
+ *  so an indicator line is never mistaken for a directional signal. */
+const OVERLAYS = [
+  { id: 'sma20', label: 'SMA 20', colour: '#8fa8c8', width: 1 },
+  { id: 'sma50', label: 'SMA 50', colour: '#a98fc8', width: 1 },
+  { id: 'ema20', label: 'EMA 20', colour: '#c8a88f', width: 1 },
+  { id: 'vwap', label: 'VWAP', colour: '#e0aa46', width: 2 },
+] as const;
+
+type OverlayId = (typeof OVERLAYS)[number]['id'];
+
+function computeOverlay(id: OverlayId, bars: Bar[], interval: string): LinePoint[] {
+  switch (id) {
+    case 'sma20':
+      return sma(bars, 20);
+    case 'sma50':
+      return sma(bars, 50);
+    case 'ema20':
+      return ema(bars, 20);
+    case 'vwap':
+      // A VWAP across days is meaningless, so it is simply absent on daily bars
+      // rather than drawn as a line that looks authoritative and is not.
+      return interval === '1d' ? [] : vwap(bars, globexSessionKey);
+  }
+}
 
 /**
  * Price chart for the selected watchlist instrument.
@@ -29,7 +56,11 @@ export function PriceChart({ symbol }: { symbol: string }) {
   const candles = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const volume = useRef<ISeriesApi<'Histogram'> | null>(null);
 
+  const overlays = useRef<Map<OverlayId, ISeriesApi<'Line'>>>(new Map());
+  const barsRef = useRef<Bar[]>([]);
+
   const [interval, setInterval] = useState<string>('15m');
+  const [active, setActive] = useState<Set<OverlayId>>(new Set(['sma20', 'vwap']));
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [meta, setMeta] = useState<{ name: string; last: number | null }>({
@@ -84,6 +115,22 @@ export function PriceChart({ symbol }: { symbol: string }) {
       scaleMargins: { top: 0.82, bottom: 0 },
     });
 
+    // One line series per overlay, created once and fed data as toggles change.
+    // Adding and removing series on every toggle makes the chart flicker and
+    // loses the user's zoom.
+    for (const overlay of OVERLAYS) {
+      overlays.current.set(
+        overlay.id,
+        instance.addLineSeries({
+          color: overlay.colour,
+          lineWidth: overlay.width as 1 | 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+        }),
+      );
+    }
+
     chart.current = instance;
 
     const resize = () => {
@@ -97,8 +144,28 @@ export function PriceChart({ symbol }: { symbol: string }) {
       chart.current = null;
       candles.current = null;
       volume.current = null;
+      overlays.current.clear();
     };
   }, []);
+
+  // Redraw overlays whenever the toggles or the underlying bars change.
+  useEffect(() => {
+    const bars = barsRef.current;
+    for (const overlay of OVERLAYS) {
+      const series = overlays.current.get(overlay.id);
+      if (!series) continue;
+      if (!active.has(overlay.id) || bars.length === 0) {
+        series.setData([]);
+        continue;
+      }
+      series.setData(
+        computeOverlay(overlay.id, bars, interval).map((p) => ({
+          time: p.time as never,
+          value: p.value,
+        })),
+      );
+    }
+  }, [active, interval, loading]);
 
   // Load bars whenever the symbol or timeframe changes.
   useEffect(() => {
@@ -111,6 +178,7 @@ export function PriceChart({ symbol }: { symbol: string }) {
       .then((payload) => {
         if (cancelled || !candles.current || !volume.current) return;
         const bars: Bar[] = payload.bars;
+        barsRef.current = bars;
         candles.current.setData(
           bars.map((b) => ({
             time: b.time as never,
@@ -173,6 +241,57 @@ export function PriceChart({ symbol }: { symbol: string }) {
             </button>
           ))}
         </div>
+      </div>
+
+      <div
+        style={{
+          display: 'flex',
+          gap: '0.35rem',
+          padding: '0 1rem 0.5rem',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+        }}
+      >
+        {OVERLAYS.map((overlay) => {
+          const on = active.has(overlay.id);
+          const unavailable = overlay.id === 'vwap' && interval === '1d';
+          return (
+            <button
+              key={overlay.id}
+              disabled={unavailable}
+              aria-pressed={on && !unavailable}
+              title={unavailable ? 'VWAP is meaningless across days' : undefined}
+              style={{
+                padding: '0.15rem 0.45rem',
+                fontSize: '0.7rem',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.35rem',
+                borderColor: on && !unavailable ? overlay.colour : undefined,
+                color: on && !unavailable ? 'var(--fg-000)' : undefined,
+              }}
+              onClick={() =>
+                setActive((current) => {
+                  const next = new Set(current);
+                  if (next.has(overlay.id)) next.delete(overlay.id);
+                  else next.add(overlay.id);
+                  return next;
+                })
+              }
+            >
+              <i
+                style={{
+                  width: 10,
+                  height: 2,
+                  background: overlay.colour,
+                  opacity: on && !unavailable ? 1 : 0.35,
+                  display: 'inline-block',
+                }}
+              />
+              {overlay.label}
+            </button>
+          );
+        })}
       </div>
       <div className="region-body" style={{ position: 'relative' }}>
         <div ref={container} style={{ height: 320, width: '100%' }} />

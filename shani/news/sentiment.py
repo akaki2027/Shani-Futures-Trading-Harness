@@ -55,9 +55,35 @@ contain no new information.
 - Social media chatter is sentiment, not fact. Rate it, but keep confidence low.
 
 For each item return:
-  lean       one of: strong_bearish, bearish, neutral, bullish, strong_bullish
+  lean       overall read for risk assets: strong_bearish, bearish, neutral, \
+bullish, strong_bullish
+  markets    per-market direction, only for markets this genuinely bears on,
+             e.g. {"CL": "bullish", "ES": "bearish"}
   confidence 0.0-1.0 — how strongly this actually argues its direction
   rationale  at most 12 words, concrete
+
+`markets` is NOT the overall lean repeated. Direction really does differ by
+market: an oil supply disruption is bullish for CL and bearish for ES in the
+same sentence.
+
+Valid market codes: ES (S&P 500), NQ (Nasdaq 100), CL (crude oil), GC (gold).
+
+Populate `markets` whenever an item plausibly bears on one, including when the
+direction is `neutral` for that market — a market you have considered and judged
+flat is useful information, and is different from one you did not consider.
+
+Typical mappings, to be applied with judgement rather than mechanically:
+- Rates, inflation, Fed language, jobs, growth  → ES and NQ. Gold too, via real
+  yields, usually in the opposite direction to rates.
+- Oil supply, OPEC, inventories, Middle East    → CL. Often ES as well, since a
+  sustained oil move feeds inflation and risk appetite.
+- Tech earnings, AI capex, semiconductors       → NQ, and ES more weakly.
+- Haven demand, dollar strength, geopolitics    → GC, and usually ES inversely.
+- Company news with no sector read              → leave `markets` empty.
+
+If a headline is genuinely irrelevant to all four — celebrity news, personal
+finance advice, a regional market close — leave `markets` empty and mark the
+overall lean neutral.
 
 Use `neutral` freely. Most headlines are noise, and marking noise as directional \
 is the failure mode that makes a tool like this worthless.
@@ -65,9 +91,14 @@ is the failure mode that makes a tool like this worthless.
 Reserve confidence above 0.7 for genuine market-moving information: a rate \
 decision, a surprise print, a supply shock.
 
-Respond with JSON: {"items": [{"i": <index>, "lean": ..., "confidence": ..., \
-"rationale": ...}]}\
+Respond with JSON: {"items": [{"i": <index>, "lean": ..., "markets": {...}, \
+"confidence": ..., "rationale": ...}]}\
 """
+
+#: Markets the per-item read may name. Anything else is discarded rather than
+#: displayed — a model inventing "SPY" or "BTC" must not create a column the
+#: rest of the application has no contract specification for.
+KNOWN_MARKETS = frozenset({"ES", "NQ", "CL", "GC"})
 
 
 def classify(items: list[NewsItem], llm: LLM, *, batch_size: int = 25) -> list[NewsItem]:
@@ -122,6 +153,23 @@ def _classify_batch(batch: list[NewsItem], llm: LLM) -> None:
         item = batch[index]
         item.lean = Lean.from_text(entry.get("lean"))
         item.rationale = str(entry.get("rationale", ""))[:120]
+
+        markets = entry.get("markets")
+        if isinstance(markets, dict):
+            resolved: dict[str, Lean] = {}
+            for code, direction in markets.items():
+                symbol = str(code).strip().upper()
+                if symbol not in KNOWN_MARKETS:
+                    continue
+                lean = Lean.from_text(direction)
+                if lean is not Lean.UNRATED:
+                    resolved[symbol] = lean
+            item.market_leans = resolved
+            # Keep the keyword-guessed tags in step with what the model
+            # actually judged, so the UI does not show a symbol chip with no
+            # corresponding read behind it.
+            if resolved:
+                item.symbols = sorted(resolved)
         try:
             item.confidence = max(0.0, min(1.0, float(entry.get("confidence", 0))))
         except (TypeError, ValueError):

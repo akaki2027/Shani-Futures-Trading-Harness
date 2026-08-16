@@ -271,10 +271,25 @@ export interface NewsArticle {
   lean: string;
   lean_label: string;
   score: number;
+  /** Per-market direction. Genuinely differs from `lean` — an oil shock is
+   *  bullish CL and bearish ES in the same sentence. */
+  market_leans: Record<string, string>;
   /** 0–1. Drives colour intensity, so a weak read renders pale. */
   confidence: number;
   rationale: string;
   age_minutes: number;
+}
+
+export interface MarketRead {
+  symbol: string;
+  lean: string;
+  lean_label: string;
+  score: number;
+  bullish: number;
+  bearish: number;
+  neutral: number;
+  unrated: number;
+  headline: string;
 }
 
 export interface NewsConnector {
@@ -302,6 +317,7 @@ export interface NewsPayload {
     unrated: number;
     headline: string;
   };
+  markets: MarketRead[];
   connectors: NewsConnector[];
   classified: boolean;
 }

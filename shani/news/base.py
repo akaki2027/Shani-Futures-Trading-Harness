@@ -125,11 +125,25 @@ class NewsItem:
     symbols: list[str] = field(default_factory=list)
 
     lean: Lean = Lean.UNRATED
+    """Overall directional read, for risk assets broadly."""
+
+    #: Per-market direction, e.g. ``{"CL": Lean.BULLISH, "ES": Lean.BEARISH}``.
+    #:
+    #: Not a copy of :attr:`lean` fanned out across symbols — direction really
+    #: does differ by market. An oil supply disruption is bullish for crude and
+    #: bearish for equities in the same sentence, and a feed that shows one
+    #: colour for both is wrong for whichever market you happen to trade.
+    market_leans: dict[str, Lean] = field(default_factory=dict)
+
     #: 0.0–1.0. Drives colour intensity, so a weak read renders pale.
     confidence: float = 0.0
     #: One line on *why* it leans that way. Without this the colour is an
     #: unfalsifiable assertion.
     rationale: str = ""
+
+    def lean_for(self, symbol: str) -> Lean:
+        """Direction for one market, falling back to the overall read."""
+        return self.market_leans.get(symbol, self.lean)
 
     def age_minutes(self, now: datetime | None = None) -> float:
         reference = now or datetime.now(UTC)
@@ -150,6 +164,7 @@ class NewsItem:
             "lean": self.lean.value,
             "lean_label": self.lean.label,
             "score": self.lean.score,
+            "market_leans": {k: v.value for k, v in self.market_leans.items()},
             "confidence": round(self.confidence, 2),
             "rationale": self.rationale,
             "age_minutes": round(self.age_minutes(), 1),

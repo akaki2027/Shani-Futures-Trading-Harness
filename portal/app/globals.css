@@ -515,13 +515,66 @@ tbody tr:hover {
 .news-rail[data-lean='bullish']        { background: var(--lean-bull); }
 .news-rail[data-lean='strong_bullish'] { background: var(--lean-strong-bull); }
 
+/* The headline itself carries the lean.
+ *
+ * A thin rail is readable but easy to skim past. Colouring the title means the
+ * direction is legible from the text you were already reading, which is the
+ * point — the section exists to be scanned, not studied. Weight rises with the
+ * strength of the read so a strong call is bolder as well as more saturated,
+ * and the colour is never the only cue: every rated card also states its lean
+ * in the meta row, so this survives colour-blindness and a monochrome screen. */
 .news-title {
   color: var(--fg-000);
   font-size: 0.8125rem;
   line-height: 1.45;
   text-decoration: none;
   display: block;
+  font-weight: 450;
 }
+.news-title[data-lean='strong_bearish'] { color: var(--lean-strong-bear); font-weight: 600; }
+.news-title[data-lean='bearish']        { color: var(--down-bright); font-weight: 500; }
+.news-title[data-lean='neutral']        { color: var(--fg-100); }
+.news-title[data-lean='bullish']        { color: var(--up-bright); font-weight: 500; }
+.news-title[data-lean='strong_bullish'] { color: var(--lean-strong-bull); font-weight: 600; }
+.news-title[data-lean='unrated']        { color: var(--fg-200); }
+
+/* Per-market read. A row of chips above the feed answering "what is the news
+   saying about ES specifically", which a single blended digest cannot. */
+.market-strip {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin: 0.6rem 0 0.2rem;
+}
+.market-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 3px;
+  border: 1px solid var(--line-strong);
+  background: var(--ground-100);
+  min-width: 3.6rem;
+}
+.market-chip[data-lean='strong_bearish'] { border-color: var(--lean-strong-bear); background: var(--down-wash); }
+.market-chip[data-lean='bearish']        { border-color: var(--lean-bear); }
+.market-chip[data-lean='neutral']        { border-color: var(--lean-neutral); }
+.market-chip[data-lean='bullish']        { border-color: var(--lean-bull); }
+.market-chip[data-lean='strong_bullish'] { border-color: var(--lean-strong-bull); background: var(--up-wash); }
+
+.market-chip b {
+  font-size: 0.8125rem;
+  color: var(--fg-000);
+  font-variant-numeric: tabular-nums;
+}
+.market-chip span {
+  font-size: 0.625rem;
+  color: var(--fg-300);
+}
+.market-chip[data-lean='strong_bearish'] span,
+.market-chip[data-lean='bearish'] span { color: var(--down-bright); }
+.market-chip[data-lean='strong_bullish'] span,
+.market-chip[data-lean='bullish'] span { color: var(--up-bright); }
 .news-title:hover {
   text-decoration: underline;
   text-underline-offset: 0.15em;

@@ -96,6 +96,27 @@ export function News({ onOpenConnectors }: { onOpenConnectors: () => void }) {
           </div>
         )}
 
+        {/* Per-market read. An oil supply shock is bullish crude and bearish
+            equities in the same sentence, so one blended number would describe
+            neither market. */}
+        {data && data.markets.length > 0 && (
+          <div className="market-strip">
+            {data.markets.map((m) => (
+              <div
+                key={m.symbol}
+                className="market-chip"
+                data-lean={m.lean}
+                title={m.headline}
+              >
+                <b>{m.symbol}</b>
+                <span>
+                  {m.lean === 'unrated' ? 'no news' : m.lean_label.toLowerCase()}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
         {data && !data.classified && (
           <p className="muted" style={{ fontSize: '0.6875rem', marginTop: '0.5rem' }}>
             No model configured, so nothing is rated. Add a provider in settings
@@ -141,6 +162,7 @@ export function News({ onOpenConnectors }: { onOpenConnectors: () => void }) {
             <div>
               <a
                 className="news-title"
+                data-lean={item.lean}
                 href={item.url}
                 target="_blank"
                 rel="noopener noreferrer"
