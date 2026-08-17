@@ -34,28 +34,42 @@ export function News({ onOpenConnectors }: { onOpenConnectors: () => void }) {
   const [filter, setFilter] = useState<'all' | 'directional'>('all');
   const [expanded, setExpanded] = useState<string | null>(null);
 
-  const load = useCallback(async (refresh = false) => {
-    setBusy(true);
-    setError(null);
+  // `background` separates a poll from a click. Only a click may drive the
+  // busy state — a background poll that flips `busy` disables the Refresh
+  // button and swaps its label to an ellipsis underneath the user's cursor,
+  // which reads as the control glitching rather than as work happening.
+  const load = useCallback(async (refresh = false, background = false) => {
+    if (!background) setBusy(true);
     try {
       setData(await api.news(refresh));
+      setError(null);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Could not load news.');
     } finally {
-      setBusy(false);
+      if (!background) setBusy(false);
     }
   }, []);
 
   useEffect(() => {
     void load();
-    // While the server is warming its cache it returns immediately with
-    // `warming: true` and nothing to show, so poll quickly until the first pass
-    // lands. After that, five minutes matches the server cache and polling
-    // faster only burns calls.
-    const period = data?.warming || !data ? 4_000 : 300_000;
-    const timer = setInterval(() => void load(), period);
+  }, [load]);
+
+  // While the server is warming its cache it returns immediately with
+  // `warming: true` and nothing to show, so poll quickly until the first pass
+  // lands. After that, five minutes matches the server cache and polling
+  // faster only burns calls.
+  //
+  // This depends on `warming` — a boolean that changes once — and NOT on
+  // `data`. Depending on `data` meant every completed fetch replaced the object,
+  // which re-fired this effect, which fetched again: an unbroken request loop
+  // that tore down and rebuilt the interval each pass and left every control in
+  // this panel flickering.
+  const warming = data?.warming ?? true;
+  useEffect(() => {
+    const period = warming ? 4_000 : 300_000;
+    const timer = setInterval(() => void load(false, true), period);
     return () => clearInterval(timer);
-  }, [load, data?.warming, data]);
+  }, [load, warming]);
 
   const items = (data?.items ?? []).filter(
     (i) => filter === 'all' || (i.lean !== 'neutral' && i.lean !== 'unrated'),
@@ -170,8 +184,24 @@ export function News({ onOpenConnectors }: { onOpenConnectors: () => void }) {
                               {d.note}
                             </div>
                           )}
+                          {/* The source is a link to the published report, so a
+                              reading can be checked at its origin rather than
+                              taken on trust. That matters more here than on a
+                              headline: these numbers drive a directional call
+                              and are the ones worth arguing with. */}
                           <div className="news-meta">
-                            <span>{d.source}</span>
+                            {d.url ? (
+                              <a
+                                href={d.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                title={`Open ${d.source}`}
+                              >
+                                {d.source} ↗
+                              </a>
+                            ) : (
+                              <span>{d.source}</span>
+                            )}
                             <span>as of {d.as_of}</span>
                           </div>
                         </div>

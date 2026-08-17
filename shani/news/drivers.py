@@ -72,6 +72,22 @@ TREASURY_XML = (
     "pages/xml?data=daily_treasury_yield_curve&field_tdr_date_value={year}"
 )
 
+# Where a human goes to check the number themselves. Deliberately the readable
+# page rather than the endpoint the number was fetched from — a trader following
+# a link wants the published report, not the JSON that fed the parser.
+#
+# Every driver carries one. A reading with no verifiable origin is an assertion,
+# and the point of this layer is that it is not making things up.
+COT_REPORT_URL = "https://www.cftc.gov/MarketReports/CommitmentsofTraders/index.htm"
+TREASURY_CURVE_URL = (
+    "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/"
+    "TextView?type=daily_treasury_yield_curve&field_tdr_date_value={year}"
+)
+FRED_SERIES_URL = "https://fred.stlouisfed.org/series/{series_id}"
+CME_VOLUME_URL = (
+    "https://www.cmegroup.com/markets/products.html#pageNumber=1&sortAsc=false"
+)
+
 
 @dataclass(slots=True)
 class Driver:
@@ -90,6 +106,10 @@ class Driver:
     source: str
     #: Context that argues both ways and so must not be folded into ``lean``.
     note: str | None = None
+    #: Where to read the published figure yourself. The portal turns the source
+    #: label into a link, so a reading can always be checked at its origin
+    #: rather than taken on trust.
+    url: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -98,7 +118,7 @@ class Driver:
             "lean": self.lean.value, "lean_label": self.lean.label,
             "score": self.lean.score, "confidence": round(self.confidence, 2),
             "rationale": self.rationale, "as_of": self.as_of,
-            "source": self.source, "note": self.note,
+            "source": self.source, "note": self.note, "url": self.url,
         }
 
 
@@ -214,6 +234,7 @@ class DriversService:
                     as_of=str(latest.get("report_date_as_yyyy_mm_dd", ""))[:10],
                     source=label,
                     note=note,
+                    url=COT_REPORT_URL,
                 )
             )
         return drivers
@@ -292,6 +313,7 @@ class DriversService:
                         if curve_bp < 0
                         else None
                     ),
+                    url=TREASURY_CURVE_URL.format(year=stamp[:4] or date.today().year),
                 )
             )
         return drivers
@@ -376,6 +398,7 @@ class DriversService:
                                   f"{abs(pct):.1f}%. {why}",
                         as_of=str(rows[0].get("date", ""))[:10],
                         source="FRED · St. Louis Fed",
+                        url=FRED_SERIES_URL.format(series_id=series_id),
                     )
                 )
         return drivers
@@ -444,6 +467,7 @@ class DriversService:
                     rationale=rationale,
                     as_of=trade_date,
                     source=label,
+                    url=CME_VOLUME_URL,
                 )
             )
 

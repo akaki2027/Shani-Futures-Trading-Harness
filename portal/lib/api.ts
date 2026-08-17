@@ -296,6 +296,8 @@ export interface MarketDriver {
   source: string;
   /** Context that argues both ways, kept out of the direction. */
   note: string | null;
+  /** The published report this reading came from, for checking it yourself. */
+  url: string | null;
 }
 
 export interface MarketRead {
