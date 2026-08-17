@@ -57,9 +57,16 @@ JavaScript expressions evaluated in the TradingView page are derived from its
 
 - Reaching TradingView Desktop through the standard Chromium remote debugging
   port rather than scraping or reverse-engineering network traffic.
-- The specific internal page API to target: `window.tvWidget.activeChart()` for
-  symbol / resolution / studies / series data, and the Monaco editor instance
-  whose language id is `pinescript` for Pine Editor access.
+- The idea of driving the chart through its own internal page API, and the Monaco
+  editor instance whose language id is `pinescript` for Pine Editor access.
+
+  Note that the *specific* global that project uses, `window.tvWidget`, does not
+  exist on tradingview.com — it belongs to the embeddable Charting Library, not
+  the application Desktop actually loads, which exposes `window.TradingViewApi`.
+  Shani checks the application global first. The trading-account internals
+  (`trading()._activeBroker`, `allExecutions()`, `ordersHistory()`, and the
+  `executionUpdate` delegate behind live fill capture) were found independently
+  and are not part of what was borrowed.
 - The architectural discipline of isolating *all* page coupling in exactly one
   file, so that a TradingView update is a one-file fix.
 - The `doctor` diagnostic-command pattern, with per-check pass/fail lines and
@@ -84,8 +91,24 @@ JavaScript expressions evaluated in the TradingView page are derived from its
 | `desktop-notifier` | MIT | Post-trade interview notifications |
 | `pyyaml` | MIT | Config files |
 
-Portal dependencies (`portal/`) are recorded in `portal/package.json`.
-`lightweight-charts` is Apache-2.0, published by TradingView.
+Portal dependencies (`portal/`) are recorded in `portal/package.json`: `next`,
+`react` and `react-dom` are MIT; `lightweight-charts` is Apache-2.0, published by
+TradingView.
+
+Dependencies are not vendored — `node_modules/` and the Python environment are
+both ignored, so this repository distributes source only and each user installs
+its dependencies under their own licences. A dependency audit at the time of
+writing found no GPL, AGPL or SSPL anywhere in either tree. Four Python packages
+(`certifi`, `bidict`, `pathspec`, `tqdm`) are MPL-2.0, which is file-level
+copyleft and explicitly permits a larger work under other terms (MPL §3.3), and
+`@img/sharp-win32-x64` — pulled in transitively by Next.js — bundles LGPL-3.0
+libvips as a separate binary.
+
+### Keep the chart attribution
+
+`lightweight-charts` renders a "Charting by TradingView" link, and it is left at
+the library default deliberately. It is a licence condition, not decoration. Do
+not pass `attributionLogo: false` to remove it.
 
 ---
 
