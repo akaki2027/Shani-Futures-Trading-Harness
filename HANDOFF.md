@@ -3,7 +3,14 @@
 Written at the end of the first build session. This is the state of things and
 what to do next, so a fresh session can start working rather than rediscovering.
 
-**Owner:** akaki2027 · **Repo:** local, not yet pushed · **Trades:** futures, mainly MES/ES
+**Owner:** akaki2027 · **Repo:** <https://github.com/akaki2027/Shani-Futures-Trading-Harness>
+(public) · **Trades:** futures, mainly MES/ES
+
+The repository is public, which is a standing constraint rather than a fact
+about one day. Anything that works only because of the author's local state —
+his database, his keys, his TradingView session — is a defect, not a shortcut.
+Judge a change by what it does on a stranger's fresh clone with no data and no
+keys.
 
 ---
 
@@ -27,6 +34,7 @@ Verified by running it, not just by tests passing.
 | Model settings | OpenRouter picker over 411 live models with pricing, two tiers, key write-only |
 | Portal | Next.js, dark, tabular figures, themed browser surfaces |
 | Trade import | **Built and run.** `shani import` reads the TradingView account and writes round trips. Reconciled to the cent against the account's own realized P&L |
+| The journal | **Real trades only.** The 60 demo rows and 6 `shani verify` artefacts were deleted on 2026-08-17; what remains is 25 imported trades. Stats are honest: net $4,717.50, 43.5% win rate, expectancy $188.70 |
 | Verification | `shani doctor` (components) and `shani verify` (seams). 390 tests, ruff + mypy strict clean |
 
 Run it:
@@ -133,19 +141,15 @@ all 66 pre-existing interviews intact.
    that fills parse cleanly: a fill fires the event, Shani grabs the chart and
    screenshot and opens the interview while the trade is still fresh. Import
    already proves the data shape; this only changes the trigger.
-2. **Separate the demo trades from the real ones.** The database now holds 66
-   synthetic trades from `shani demo` alongside 25 imported real ones, and
-   `/api/stats` pools all 91. Every statistic the portal shows is currently part
-   fiction. Either drop the demo rows or teach the stats layer to exclude them —
-   this is now the biggest correctness problem in the project.
-3. **Fix CME open interest.** OI distinguishes new money committing from an
+2. **Fix CME open interest.** OI distinguishes new money committing from an
    unwind; they look identical on a chart.
-4. **FRED key** — one paste, lights up VIX, breakevens and the dollar.
-5. **Plane C end to end** — Cloudflare tunnel, one real Pine alert.
-6. **NinjaTrader read-only capture** — lower value now that TradingView import
+3. **FRED key** — one paste, lights up VIX, breakevens and the dollar.
+4. **Plane C end to end** — Cloudflare tunnel, one real Pine alert.
+5. **NinjaTrader read-only capture** — lower value now that TradingView import
    is understood, but still the path for anyone trading through NT8.
-7. **Push to GitHub.** Repo is clean: no `.env` or database tracked, CI fails the
-   build if either ever is.
+6. **A first-run path for people who pull it.** The repo is public now. `shani
+   init` exists, but nobody has walked the clone → keys → first chart route from
+   scratch to see where it breaks.
 
 ---
 

@@ -16,8 +16,19 @@ project uses [semantic versioning](https://semver.org/spec/v2.0.0.html).
   trip is keyed on the fill that opened it, so a second run updates rather than
   duplicates, and any interview, notes or tags on an imported trade survive.
 - `Trade.external_id`, recording a trade's identity at the venue it came from.
+- `shani demo --clear`. Everything the demo seeds is now tagged, so it can be
+  taken back out again without touching your own trades. Previously the only
+  documented way to undo `shani demo` was to delete the database.
+- Market drivers carry the URL of the report they came from, and the portal
+  renders the source as a link, so a reading can be checked at its origin.
 
 ### Fixed
+
+- The news panel refetched in an unbroken loop: its polling effect depended on
+  the data object it replaced on every fetch. That churned the interval and held
+  the busy state on, which made Signal only / Sources / Refresh flicker and drop
+  clicks. Background polls no longer drive the busy state either — only a click
+  does.
 
 - `root_of` and `parse_contract` now understand four-digit contract years, so
   `CME_MINI:MESU2026` resolves to `MES` instead of raising. TradingView's
