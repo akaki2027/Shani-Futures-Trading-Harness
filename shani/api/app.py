@@ -234,14 +234,18 @@ def build_app(config: Config | None = None) -> FastAPI:
         that quietly shows less than the trader believes it is showing is worse
         than one that says "Reddit is down".
         """
-        return news_service.fetch(
+        # Non-blocking: returns what is cached and refreshes behind the request.
+        # Fetching everything inline takes a minute on a cold cache, and the dev
+        # proxy turns that timeout into a 500 — a slow endpoint reported as a
+        # broken one.
+        return news_service.snapshot(
             cfg.tradingview.watchlist,
             build_llm(load_config().model),
             limit=limit,
             refresh=refresh,
             # Hard data carries double weight in the per-market rating. See the
             # note in NewsService._digest.
-            drivers=drivers_service.fetch(cfg.tradingview.watchlist, refresh=refresh),
+            drivers_loader=lambda: drivers_service.fetch(cfg.tradingview.watchlist),
         )
 
     @app.get("/api/drivers", dependencies=auth)

@@ -37,9 +37,10 @@ depending on your horizon and pretending otherwise would be false precision.
 
 from __future__ import annotations
 
+import os
 import time as _time
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 from xml.etree import ElementTree
 
@@ -119,7 +120,7 @@ class DriversService:
 
         self._errors = []
         drivers: list[Driver] = []
-        for loader in (self._cot, self._treasury):
+        for loader in (self._cot, self._treasury, self._fred, self._cme):
             try:
                 drivers.extend(loader())
             except Exception as exc:
@@ -294,6 +295,234 @@ class DriversService:
                 )
             )
         return drivers
+
+
+    # ── FRED (St. Louis Fed) ─────────────────────────────────────────────────
+
+    def _fred(self) -> list[Driver]:
+        """Macro series that actually move index futures.
+
+        Needs a free key. Silently absent without one rather than erroring —
+        an unconfigured optional source is not a fault.
+
+        Series are chosen because each has a direct, explicable transmission to
+        a market Shani trades. VIX is the exception to the change-not-level rule
+        below: with volatility, the *level* genuinely is the signal, since
+        elevated vol suppresses risk appetite regardless of yesterday's print.
+        """
+        key = os.environ.get("FRED_API_KEY") or _from_dotenv("FRED_API_KEY")
+        if not key:
+            return []
+
+        # series: (label, markets affected, inverted?, why)
+        series: dict[str, tuple[str, tuple[str, ...], bool, str]] = {
+            "VIXCLS": ("VIX", ("ES", "NQ"), True,
+                       "Elevated volatility suppresses risk appetite."),
+            "T10YIE": ("10y breakeven inflation", ("GC",), False,
+                       "Rising inflation expectations support gold."),
+            "DTWEXBGS": ("Trade-weighted dollar", ("GC", "CL"), True,
+                         "A stronger dollar prices commodities higher abroad."),
+        }
+
+        drivers: list[Driver] = []
+        for series_id, (label, markets, inverted, why) in series.items():
+            try:
+                response = httpx.get(
+                    "https://api.stlouisfed.org/fred/series/observations",
+                    params={
+                        "series_id": series_id, "api_key": key, "file_type": "json",
+                        "sort_order": "desc", "limit": 6,
+                    },
+                    headers=_UA, timeout=20.0,
+                )
+                response.raise_for_status()
+                rows = [
+                    r for r in response.json().get("observations", [])
+                    if r.get("value") not in (".", "", None)
+                ]
+            except Exception:
+                continue
+            if len(rows) < 2:
+                continue
+
+            now = _float(rows[0]["value"])
+            prior = _float(rows[1]["value"])
+            if now is None or prior is None or prior == 0:
+                continue
+
+            pct = (now - prior) / abs(prior) * 100
+            raw = pct if not inverted else -pct
+            if abs(pct) < 0.5:
+                lean, confidence = Lean.NEUTRAL, 0.15
+            elif raw > 0:
+                lean = Lean.STRONG_BULLISH if abs(pct) > 4 else Lean.BULLISH
+                confidence = min(0.6, 0.2 + abs(pct) / 12)
+            else:
+                lean = Lean.STRONG_BEARISH if abs(pct) > 4 else Lean.BEARISH
+                confidence = min(0.6, 0.2 + abs(pct) / 12)
+
+            for market in markets:
+                drivers.append(
+                    Driver(
+                        id=f"fred:{series_id}:{market}",
+                        market=market,
+                        name=label,
+                        value=f"{now:g}",
+                        prior=f"{prior:g}",
+                        change=f"{pct:+.1f}%",
+                        lean=lean,
+                        confidence=confidence,
+                        rationale=f"{label} {'up' if pct > 0 else 'down'} "
+                                  f"{abs(pct):.1f}%. {why}",
+                        as_of=str(rows[0].get("date", ""))[:10],
+                        source="FRED · St. Louis Fed",
+                    )
+                )
+        return drivers
+
+    # ── CME volume and open interest ─────────────────────────────────────────
+
+    def _cme(self) -> list[Driver]:
+        """Volume and open interest for the contracts Shani trades.
+
+        Open interest is the futures-native tell that has no equity equivalent:
+        it counts contracts outstanding, so a price move on *rising* OI means
+        new money committing, while the same move on *falling* OI means an
+        existing position unwinding. Those look identical on a chart and mean
+        opposite things.
+
+        Sourced from CME's public quote feed rather than the PDF bulletin, which
+        is a scraping target rather than an interface.
+        """
+        products = {
+            "ES": ("133", "E-mini S&P 500 · CME"),
+            "NQ": ("146", "E-mini Nasdaq-100 · CME"),
+            "CL": ("425", "Light Sweet Crude · NYMEX"),
+            "GC": ("437", "Gold · COMEX"),
+        }
+        drivers: list[Driver] = []
+        misses: list[str] = []
+        for market, (product_id, label) in products.items():
+            reading = self._cme_volume(product_id)
+            if reading is None:
+                misses.append(market)
+                continue
+            trade_date, volume, open_interest, prior_oi = reading
+
+            # OI change has a real interpretation; volume alone does not, so
+            # only the former earns a direction. Rising OI means positions being
+            # opened, falling OI means an unwind — and a rating derived from
+            # volume by itself would be the false precision this module avoids.
+            lean, confidence, rationale = Lean.NEUTRAL, 0.0, (
+                "Rising OI on a move means new money committing; falling OI "
+                "means an unwind. Identical on a chart."
+            )
+            change = None
+            if open_interest and prior_oi:
+                delta = open_interest - prior_oi
+                share = abs(delta) / max(prior_oi, 1)
+                change = f"{delta:+,} OI"
+                if share > 0.02:
+                    lean = Lean.BULLISH if delta > 0 else Lean.BEARISH
+                    confidence = min(0.4, 0.15 + share * 4)
+                    rationale = (
+                        f"Open interest {'rose' if delta > 0 else 'fell'} "
+                        f"{abs(delta):,} ({share:.1%}) — "
+                        f"{'new positions opening' if delta > 0 else 'positions unwinding'}."
+                    )
+
+            drivers.append(
+                Driver(
+                    id=f"cme:{market}",
+                    market=market,
+                    name="Volume / open interest",
+                    value=f"{volume:,} vol" + (f" · {open_interest:,} OI" if open_interest else ""),
+                    prior=f"{prior_oi:,} OI" if prior_oi else None,
+                    change=change,
+                    lean=lean,
+                    confidence=confidence,
+                    rationale=rationale,
+                    as_of=trade_date,
+                    source=label,
+                )
+            )
+
+        # Surfaced rather than swallowed. CME's volume service is undocumented
+        # and returns HTTP 200 with a body full of zeros when it has nothing for
+        # a date — a response that looks like data and is not. If it yields
+        # nothing at all, the layer says so instead of quietly presenting three
+        # sources as four.
+        if not drivers and misses:
+            raise RuntimeError(
+                f"no volume/OI returned for {', '.join(misses)} — CME's endpoint "
+                f"answered but had no figures. Undocumented service; see _cme_volume."
+            )
+        return drivers
+
+    def _cme_volume(self, product_id: str) -> tuple[str, int, int, int] | None:
+        """Most recent published volume and open interest for a product.
+
+        CME publishes on a lag and skips weekends and holidays, so the date has
+        to be walked backwards rather than assumed — asking for "today" returns
+        a valid response full of zeros, which is the kind of answer that looks
+        like data and is not.
+
+        Returns ``(trade_date, volume, open_interest, prior_open_interest)``.
+        """
+        # A browser-ish agent is required; the default one gets a challenge page.
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/131.0 Safari/537.36"
+            ),
+            "Accept": "application/json, text/plain, */*",
+            "Referer": "https://www.cmegroup.com/",
+        }
+        found: list[tuple[str, int, int]] = []
+        for offset in range(1, 9):
+            day = date.today() - timedelta(days=offset)
+            if day.weekday() >= 5:
+                continue
+            try:
+                response = httpx.get(
+                    f"https://www.cmegroup.com/CmeWS/mvc/Volume/Details/F/"
+                    f"{product_id}/{day.isoformat()}/FUT",
+                    headers=headers,
+                    timeout=15.0,
+                    follow_redirects=True,
+                )
+                response.raise_for_status()
+                totals = response.json().get("totals") or {}
+            except Exception:
+                continue
+
+            volume = _to_int(totals.get("totalVolume")) or 0
+            open_interest = _to_int(totals.get("atClose")) or _to_int(
+                totals.get("openInterest")
+            ) or 0
+            if volume > 0:
+                found.append((day.isoformat(), volume, open_interest))
+            if len(found) == 2:
+                break
+
+        if not found:
+            return None
+        trade_date, volume, open_interest = found[0]
+        prior_oi = found[1][2] if len(found) > 1 else 0
+        return trade_date, volume, open_interest, prior_oi
+
+
+def _to_int(value: Any) -> int | None:
+    try:
+        return int(str(value).replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def _from_dotenv(key: str) -> str | None:
+    from shani.settings_store import read_env_value
+
+    return read_env_value(key)
 
 
 def _int(row: dict[str, Any], key: str) -> int:

@@ -339,6 +339,9 @@ export interface NewsPayload {
   markets: MarketRead[];
   connectors: NewsConnector[];
   classified: boolean;
+  /** True while a background pass is running. The payload is still valid —
+   *  just possibly empty on the very first call. */
+  warming?: boolean;
 }
 
 export interface OrderResult {

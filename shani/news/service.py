@@ -16,6 +16,8 @@ does not re-pay a model to read the same story twice.
 
 from __future__ import annotations
 
+import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -27,6 +29,8 @@ from shani.news.providers import ALL_PROVIDERS
 from shani.news.sentiment import classify
 
 __all__ = ["Digest", "NewsService"]
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,11 +67,76 @@ class NewsService:
     #: Classified items keyed by id, so a refresh does not reclassify.
     _seen: dict[str, NewsItem] = field(default_factory=dict)
     _cache: tuple[float, dict[str, Any]] | None = None
+    _refreshing: bool = False
+    _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def invalidate(self) -> None:
         """Drop the cache — called after a connector is configured, so a new
         credential takes effect immediately rather than up to five minutes later."""
         self._cache = None
+
+    # ── non-blocking access ──────────────────────────────────────────────────
+
+    def snapshot(
+        self,
+        symbols: list[str],
+        llm: LLM,
+        *,
+        limit: int = 40,
+        refresh: bool = False,
+        drivers_loader: Any = None,
+    ) -> dict[str, Any]:
+        """Return immediately with whatever is known, refreshing in the background.
+
+        A full pass fetches five RSS feeds, a per-symbol search, four CFTC
+        series, the Treasury curve, and then pays a model to read forty
+        headlines. That is a minute or more on a cold cache, and blocking an
+        HTTP request on it produced exactly the failure the user saw: the Next.js
+        dev proxy times out and reports a 500 to the browser, so a *slow*
+        endpoint looks like a *broken* one.
+
+        So this never blocks. The first call returns empty with ``warming: true``
+        and the portal polls again shortly; every later call serves the cached
+        payload while a refresh happens behind it. Stale news is worth far more
+        than a spinner, and infinitely more than a 500.
+        """
+        fresh = self._cache is not None and self._cache[0] > time.monotonic()
+
+        if refresh or not fresh:
+            self._start_refresh(symbols, llm, limit, drivers_loader)
+
+        if self._cache is None:
+            return {
+                "items": [], "digest": self._digest([]).to_json(),
+                "markets": [], "connectors": [], "classified": llm.enabled,
+                "warming": True,
+            }
+        return {**self._cache[1], "warming": self._refreshing}
+
+    def _start_refresh(
+        self, symbols: list[str], llm: LLM, limit: int, drivers_loader: Any
+    ) -> None:
+        """Kick off one background refresh, never two.
+
+        The lock matters: the portal polls, and several requests can arrive
+        while a pass is in flight. Without it, each would launch its own fetch
+        and the model would be paid several times over for the same headlines.
+        """
+        with self._lock:
+            if self._refreshing:
+                return
+            self._refreshing = True
+
+        def run() -> None:
+            try:
+                drivers = drivers_loader() if drivers_loader else None
+                self.fetch(symbols, llm, limit=limit, refresh=True, drivers=drivers)
+            except Exception:
+                log.exception("background news refresh failed")
+            finally:
+                self._refreshing = False
+
+        threading.Thread(target=run, name="shani-news-refresh", daemon=True).start()
 
     # ── connectors ───────────────────────────────────────────────────────────
 

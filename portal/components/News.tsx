@@ -48,10 +48,14 @@ export function News({ onOpenConnectors }: { onOpenConnectors: () => void }) {
 
   useEffect(() => {
     void load();
-    // Five minutes matches the server cache; polling faster just burns calls.
-    const timer = setInterval(() => void load(), 300_000);
+    // While the server is warming its cache it returns immediately with
+    // `warming: true` and nothing to show, so poll quickly until the first pass
+    // lands. After that, five minutes matches the server cache and polling
+    // faster only burns calls.
+    const period = data?.warming || !data ? 4_000 : 300_000;
+    const timer = setInterval(() => void load(), period);
     return () => clearInterval(timer);
-  }, [load]);
+  }, [load, data?.warming, data]);
 
   const items = (data?.items ?? []).filter(
     (i) => filter === 'all' || (i.lean !== 'neutral' && i.lean !== 'unrated'),
@@ -201,7 +205,14 @@ export function News({ onOpenConnectors }: { onOpenConnectors: () => void }) {
           ))}
         </div>
 
-        {items.length === 0 && !busy && !error && (
+        {data?.warming && items.length === 0 && (
+          <div className="loading">
+            Reading the tape — fetching wires, positioning and the curve, then
+            rating each item. First pass takes a minute.
+          </div>
+        )}
+
+        {items.length === 0 && !busy && !error && !data?.warming && (
           <div className="empty">
             {filter === 'directional'
               ? 'Nothing in the feed is arguing a direction right now. That is usually the truth rather than a fault.'
