@@ -636,3 +636,129 @@ class TestImportEndpoint:
         # Second import must not double it.
         assert client.post("/api/trades/import").json()["imported"] == 1
         assert len([t for t in client.get("/api/trades").json() if t["symbol"] == "MES"]) == 1
+
+
+class TestDemoDataIsReversible:
+    """`shani demo` must not be a one-way door.
+
+    Seeding synthetic history is how a new user finds out whether the portal is
+    any good. Before this was reversible the only documented way to undo it was
+    "delete the database", which takes the user's real journal with it — so the
+    safe move was to never try the demo at all, which defeats its purpose.
+
+    The property under test is not "clear removes the demo data". It is "clear
+    removes the demo data *and nothing else*".
+    """
+
+    def _seed_mixed(self, tmp_path: Path) -> Any:
+        from datetime import UTC, datetime
+        from decimal import Decimal
+
+        from shani.cli import DEMO_SETUP_SLUG, DEMO_TAG
+        from shani.db import Database
+        from shani.models import SetupCard, Side, Trade
+
+        db = Database(tmp_path / "mixed.db")
+        for _ in range(3):
+            db.trades.save(Trade(
+                symbol="ES", side=Side.BUY, quantity=1,
+                entry_price=Decimal("5000"), exit_price=Decimal("5004"),
+                entry_at=datetime(2026, 8, 1, 14, 0, tzinfo=UTC),
+                exit_at=datetime(2026, 8, 1, 15, 0, tzinfo=UTC),
+                gross_pnl=Decimal("200"), tags=[DEMO_TAG],
+            ))
+        # A real trade that looks exactly like the synthetic ones. A cleanup
+        # that matched on price shape rather than the tag would eat this.
+        real = Trade(
+            symbol="ES", side=Side.BUY, quantity=1,
+            entry_price=Decimal("5000"), exit_price=Decimal("5004"),
+            entry_at=datetime(2026, 8, 2, 14, 0, tzinfo=UTC),
+            exit_at=datetime(2026, 8, 2, 15, 0, tzinfo=UTC),
+            gross_pnl=Decimal("200"), notes="my actual trade",
+        )
+        db.trades.save(real)
+        db.setups.save(SetupCard(name="Opening drive", slug=DEMO_SETUP_SLUG))
+        db.setups.save(SetupCard(name="Mine", slug="my-own-setup"))
+        db.close()
+        return real
+
+    def test_clear_removes_only_the_seeded_rows(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        from shani import cli
+        from shani.config import Config
+        from shani.db import Database
+
+        real = self._seed_mixed(tmp_path)
+        cfg = Config()
+        cfg.data_dir = tmp_path
+        cfg.database_path = tmp_path / "mixed.db"
+        monkeypatch.setattr(cli, "load_config", lambda: cfg)
+
+        cli._clear_demo_data()
+
+        db = Database(tmp_path / "mixed.db")
+        remaining = db.trades.all()
+        assert len(remaining) == 1, "clear took more than the seeded trades"
+        assert remaining[0].id == real.id
+        assert remaining[0].notes == "my actual trade"
+
+        slugs = {c.slug for c in db.setups.all()}
+        assert slugs == {"my-own-setup"}, "clear took a setup card that was not seeded"
+        db.close()
+
+    def test_clear_is_safe_to_run_when_nothing_was_seeded(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        from shani import cli
+        from shani.config import Config
+        from shani.db import Database
+
+        cfg = Config()
+        cfg.data_dir = tmp_path
+        cfg.database_path = tmp_path / "empty.db"
+        monkeypatch.setattr(cli, "load_config", lambda: cfg)
+        Database(cfg.database_path).close()
+
+        cli._clear_demo_data()  # must not raise
+
+    def test_a_surviving_card_does_not_cite_deleted_trades(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """Sample size is a claim about evidence, and must not outlive it.
+
+        A card left reporting "7 trades" whose trades have all been deleted is
+        worse than one reporting zero: the portal renders the number, and the
+        agent leans on it.
+        """
+        from datetime import UTC, datetime
+        from decimal import Decimal
+
+        from shani import cli
+        from shani.config import Config
+        from shani.db import Database
+        from shani.models import SetupCard, Side, Trade
+
+        db = Database(tmp_path / "cite.db")
+        seeded = Trade(
+            symbol="ES", side=Side.BUY, quantity=1,
+            entry_price=Decimal("5000"), exit_price=Decimal("5004"),
+            entry_at=datetime(2026, 8, 1, 14, 0, tzinfo=UTC),
+            gross_pnl=Decimal("200"), tags=[cli.DEMO_TAG],
+        )
+        db.trades.save(seeded)
+        mine = SetupCard(name="Mine", slug="my-own-setup", trade_ids=[seeded.id])
+        db.setups.save(mine)
+        db.close()
+
+        cfg = Config()
+        cfg.data_dir = tmp_path
+        cfg.database_path = tmp_path / "cite.db"
+        monkeypatch.setattr(cli, "load_config", lambda: cfg)
+        cli._clear_demo_data()
+
+        db = Database(tmp_path / "cite.db")
+        survivor = db.setups.all()[0]
+        assert survivor.trade_ids == []
+        assert survivor.sample_size == 0
+        db.close()

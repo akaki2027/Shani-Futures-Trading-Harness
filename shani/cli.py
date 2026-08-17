@@ -186,9 +186,25 @@ def doctor() -> None:
     console.print("[green]ready.[/green]\n")
 
 
+#: Every synthetic trade carries this tag, and nothing else does. It is what
+#: makes `shani demo --clear` possible, and the reason matters: without a marker,
+#: seeded data is indistinguishable from real trades and the only way to undo
+#: `shani demo` is to delete the database — which takes the user's own journal
+#: with it. Looking around a tool must not be a one-way door.
+DEMO_TAG = "demo"
+
+#: The setup card `shani demo` seeds. Cards have no tags, so it is matched by
+#: slug. A synthetic card left in the playbook is worse than a synthetic trade:
+#: the agent will cite it as if the trader had actually learned it.
+DEMO_SETUP_SLUG = "opening-drive-continuation"
+
+
 @app.command()
 def demo(
     trades: Annotated[int, typer.Option(help="How many synthetic trades to seed.")] = 60,
+    clear: Annotated[
+        bool, typer.Option("--clear", help="Remove seeded data instead of adding more.")
+    ] = False,
 ) -> None:
     """Seed synthetic history so the portal has something to show.
 
@@ -199,8 +215,16 @@ def demo(
     and the opening drive makes it. That is both realistic and useful — it gives
     the statistics something true to find, so you can confirm the analysis works
     before trusting it on your own trades.
+
+    Everything seeded is tagged, so `shani demo --clear` takes it all back out
+    and leaves your real trades untouched. Seed it, look around, clear it, start
+    journaling for real.
     """
     import random
+
+    if clear:
+        _clear_demo_data()
+        return
 
     from shani.db import Database
     from shani.memory.playbook import Playbook
@@ -214,7 +238,7 @@ def demo(
 
     card = playbook.create(SetupCard(
         name="Opening drive continuation",
-        slug="opening-drive-continuation",
+        slug=DEMO_SETUP_SLUG,
         description="Join the first sustained push after the cash open.",
         trigger="Price breaks the opening range high and the first pullback holds VWAP.",
         context="RTH only, first hour, on a day that gaps in the direction of the trend.",
@@ -262,6 +286,7 @@ def demo(
             planned_risk=instrument_risk, session=session, time_of_day=tod,
             followed_playbook=followed,
             setup_card_id=card.id if followed else None,
+            tags=[DEMO_TAG],
             interview=[InterviewAnswer(
                 question="What did you see that made you take this trade?",
                 answer=random.choice(answers),
@@ -292,9 +317,60 @@ def demo(
     console.print(table)
     console.print(
         "\n[dim]This is synthetic data for exercising the portal. "
-        "Delete the database to clear it.[/dim]"
+        "Remove it with [bold]shani demo --clear[/bold] — your own trades are "
+        "left alone.[/dim]"
     )
     console.print("Next: [bold]shani serve[/bold]\n")
+
+
+def _clear_demo_data() -> None:
+    """Remove everything `shani demo` seeded, and nothing else.
+
+    Matches on the tag rather than on the shape of the data. A fingerprint —
+    "entry 5000, exit 5004" — would work today and would eventually delete a
+    real trade that happened to look like one, which is precisely the failure a
+    destructive command must not have.
+    """
+    from shani.db import Database
+    from shani.memory.stats import compute_stats
+
+    config = load_config()
+    with Database(config.db_path) as db:
+        seeded = [t for t in db.trades.all() if DEMO_TAG in t.tags]
+        cards = [c for c in db.setups.all() if c.slug == DEMO_SETUP_SLUG]
+
+        if not seeded and not cards:
+            console.print(
+                "\n[dim]No seeded data found. Nothing to clear.[/dim]\n"
+            )
+            return
+
+        for trade in seeded:
+            db.trades.delete(trade, hard=True)
+        for card in cards:
+            db.setups.delete(card, hard=True)
+
+        # A card that survived may still point at trades that did not. Left
+        # alone it would keep reporting a sample size backed by nothing.
+        removed = {t.id for t in seeded}
+        for card in db.setups.all():
+            keep = [i for i in card.trade_ids if i not in removed]
+            if len(keep) != len(card.trade_ids):
+                card.trade_ids = keep
+                db.setups.save(card)
+
+        remaining = db.trades.all()
+        stats = compute_stats(db)
+
+    console.print(
+        f"\n  Removed [bold]{len(seeded)}[/bold] seeded trades"
+        f" and {len(cards)} seeded setup card(s)."
+    )
+    console.print(f"  [bold]{len(remaining)}[/bold] trades remain.")
+    if remaining:
+        console.print(f"  Net P&L over what is left: [bold]${stats.net_pnl:,.2f}[/bold]\n")
+    else:
+        console.print("  The journal is empty — start trading.\n")
 
 
 @app.command()
