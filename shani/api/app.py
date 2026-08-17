@@ -44,6 +44,7 @@ from shani.market.screener import ScreenerProvider, ScreenerUnavailableError
 from shani.memory.playbook import Playbook
 from shani.memory.stats import compute_stats, daily_pnl, equity_curve, evaluate_playbook
 from shani.models import Order, OrderType, Side
+from shani.news.drivers import DriversService
 from shani.news.service import NewsService
 from shani.notify import Notifier
 from shani.risk.policy import RiskPolicy
@@ -105,6 +106,7 @@ def build_app(config: Config | None = None) -> FastAPI:
     bars_provider = BarsProvider()
     model_catalogue = ModelCatalogue()
     news_service = NewsService()
+    drivers_service = DriversService()
     agent = Agent(db, build_llm(cfg.model), audit)
     notifier = Notifier()
 
@@ -237,7 +239,24 @@ def build_app(config: Config | None = None) -> FastAPI:
             build_llm(load_config().model),
             limit=limit,
             refresh=refresh,
+            # Hard data carries double weight in the per-market rating. See the
+            # note in NewsService._digest.
+            drivers=drivers_service.fetch(cfg.tradingview.watchlist, refresh=refresh),
         )
+
+    @app.get("/api/drivers", dependencies=auth)
+    def drivers() -> dict[str, Any]:
+        """Structured market drivers — CFTC positioning and the Treasury curve.
+
+        Separate from ``/api/news`` because these are measurements rather than
+        commentary, and a caller may reasonably want them without paying for a
+        classification pass.
+        """
+        readings = drivers_service.fetch(cfg.tradingview.watchlist)
+        return {
+            "drivers": [d.to_json() for d in readings],
+            "errors": drivers_service.errors,
+        }
 
     @app.get("/api/news/connectors", dependencies=auth)
     def news_connectors() -> list[dict[str, Any]]:

@@ -22,6 +22,7 @@ from typing import Any
 
 from shani.agent.llm import LLM
 from shani.news.base import Lean, NewsItem, NewsProvider, ProviderError
+from shani.news.drivers import Driver
 from shani.news.providers import ALL_PROVIDERS
 from shani.news.sentiment import classify
 
@@ -95,6 +96,7 @@ class NewsService:
         *,
         limit: int = 40,
         refresh: bool = False,
+        drivers: list[Driver] | None = None,
     ) -> dict[str, Any]:
         if not refresh and self._cache and self._cache[0] > time.monotonic():
             return self._cache[1]
@@ -164,7 +166,13 @@ class NewsService:
             # answer to "what is the news saying about ES specifically", which
             # a single blended digest cannot give.
             "markets": [
-                {"symbol": symbol, **self._digest(deduped, symbol).to_json()}
+                {
+                    "symbol": symbol,
+                    **self._digest(deduped, symbol, drivers or []).to_json(),
+                    "drivers": [
+                        d.to_json() for d in (drivers or []) if d.market == symbol
+                    ],
+                }
                 for symbol in symbols
             ],
             "connectors": statuses,
@@ -194,7 +202,12 @@ class NewsService:
             by_id[item.id] = item
         return list(by_id.values())
 
-    def _digest(self, items: list[NewsItem], symbol: str | None = None) -> Digest:
+    def _digest(
+        self,
+        items: list[NewsItem],
+        symbol: str | None = None,
+        drivers: list[Driver] | None = None,
+    ) -> Digest:
         """A directional read — for the whole feed, or for one market.
 
         Weighted by confidence and by recency — a strong item from four hours
@@ -220,7 +233,12 @@ class NewsService:
         neutral = sum(1 for _, lean in rated if lean.score == 0)
         unrated = len(considered) - len(rated)
 
-        if not rated:
+        market_drivers = [
+            d for d in (drivers or [])
+            if symbol and d.market == symbol and d.lean is not Lean.UNRATED
+        ]
+
+        if not rated and not market_drivers:
             return Digest(
                 lean=Lean.UNRATED, score=0.0, bullish=0, bearish=0,
                 neutral=0, unrated=unrated,
@@ -238,6 +256,26 @@ class NewsService:
             weight = max(0.1, item.confidence) * recency
             weighted += lean.score * weight
             total_weight += weight
+
+        # Hard data outweighs commentary, deliberately and by a factor of two.
+        #
+        # A COT print and a Treasury close are measurements with a published
+        # methodology; a headline is a journalist's framing of one. When the two
+        # disagree, the number should win — and a rating that let forty opinion
+        # pieces drown out the positioning data would be exactly the tool this
+        # project is meant to replace.
+        for driver in drivers or []:
+            if symbol is None or driver.market != symbol or driver.lean is Lean.UNRATED:
+                continue
+            weight = max(0.15, driver.confidence) * 2.0
+            weighted += driver.lean.score * weight
+            total_weight += weight
+            if driver.lean.score > 0:
+                bullish += 1
+            elif driver.lean.score < 0:
+                bearish += 1
+            else:
+                neutral += 1
 
         score = weighted / total_weight if total_weight else 0.0
 

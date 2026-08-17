@@ -280,6 +280,24 @@ export interface NewsArticle {
   age_minutes: number;
 }
 
+export interface MarketDriver {
+  id: string;
+  market: string;
+  name: string;
+  value: string;
+  prior: string | null;
+  change: string | null;
+  lean: string;
+  lean_label: string;
+  score: number;
+  confidence: number;
+  rationale: string;
+  as_of: string;
+  source: string;
+  /** Context that argues both ways, kept out of the direction. */
+  note: string | null;
+}
+
 export interface MarketRead {
   symbol: string;
   lean: string;
@@ -290,6 +308,7 @@ export interface MarketRead {
   neutral: number;
   unrated: number;
   headline: string;
+  drivers: MarketDriver[];
 }
 
 export interface NewsConnector {

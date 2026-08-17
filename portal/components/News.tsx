@@ -32,6 +32,7 @@ export function News({ onOpenConnectors }: { onOpenConnectors: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [filter, setFilter] = useState<'all' | 'directional'>('all');
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   const load = useCallback(async (refresh = false) => {
     setBusy(true);
@@ -100,21 +101,82 @@ export function News({ onOpenConnectors }: { onOpenConnectors: () => void }) {
             equities in the same sentence, so one blended number would describe
             neither market. */}
         {data && data.markets.length > 0 && (
-          <div className="market-strip">
-            {data.markets.map((m) => (
-              <div
-                key={m.symbol}
-                className="market-chip"
-                data-lean={m.lean}
-                title={m.headline}
-              >
-                <b>{m.symbol}</b>
-                <span>
-                  {m.lean === 'unrated' ? 'no news' : m.lean_label.toLowerCase()}
-                </span>
-              </div>
-            ))}
-          </div>
+          <>
+            <div className="market-strip">
+              {data.markets.map((m) => (
+                <button
+                  key={m.symbol}
+                  className="market-chip"
+                  data-lean={m.lean}
+                  aria-pressed={expanded === m.symbol}
+                  title={m.headline}
+                  onClick={() => setExpanded(expanded === m.symbol ? null : m.symbol)}
+                >
+                  <b>{m.symbol}</b>
+                  <span>
+                    {m.lean === 'unrated' ? 'no read' : m.lean_label.toLowerCase()}
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            {/* Drivers for the selected market. Shown on demand rather than
+                always: four markets of positioning data at once is a wall, and
+                a trader is looking at one instrument at a time. */}
+            {expanded &&
+              (() => {
+                const market = data.markets.find((m) => m.symbol === expanded);
+                if (!market) return null;
+                return (
+                  <div style={{ margin: '0.4rem 0 0.6rem' }}>
+                    <p style={{ fontSize: '0.75rem', margin: '0 0 0.4rem' }}>
+                      {market.headline}
+                    </p>
+                    {market.drivers.length === 0 && (
+                      <p className="muted" style={{ fontSize: '0.6875rem' }}>
+                        No hard data for {expanded} yet.
+                      </p>
+                    )}
+                    {market.drivers.map((d) => (
+                      <div
+                        key={d.id}
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: '3px 1fr',
+                          gap: '0.6rem',
+                          padding: '0.4rem 0',
+                          borderBottom: '1px solid var(--line)',
+                        }}
+                      >
+                        <span className="news-rail" data-lean={d.lean} />
+                        <div>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--fg-000)' }}>
+                            {d.name}{' '}
+                            <span className="num" style={{ color: 'var(--accent-bright)' }}>
+                              {d.value}
+                            </span>{' '}
+                            <span className="muted num">{d.change}</span>
+                          </div>
+                          <div className="news-why">{d.rationale}</div>
+                          {d.note && (
+                            <div
+                              className="news-why"
+                              style={{ color: 'var(--accent-bright)', fontStyle: 'normal' }}
+                            >
+                              {d.note}
+                            </div>
+                          )}
+                          <div className="news-meta">
+                            <span>{d.source}</span>
+                            <span>as of {d.as_of}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+          </>
         )}
 
         {data && !data.classified && (
