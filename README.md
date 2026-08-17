@@ -94,6 +94,7 @@ finished and returned empty panels.
 | Portal — price charts, ticket, stats | ✅ | Driven in a browser; contract-tested against the API |
 | Price/OHLCV charts | ✅ | Live data, multiple symbols and timeframes |
 | Importing TradingView trades | ✅ | `shani import`. Reconciled to the cent against the account's own realized P&L; re-import is idempotent |
+| Real-time fill capture | ✅ | `shani watch`. Fills stream over CDP; chart screenshotted at the fill, interview opened when a round trip closes |
 | NinjaTrader execution | 📋 | Documented stub. Not implemented |
 | Live broker execution | 🔒 | Disabled by design, and structurally unreachable |
 | Mobile companion app | 📋 | Schema and API shaped for it; app not built |

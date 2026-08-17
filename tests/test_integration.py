@@ -762,3 +762,88 @@ class TestDemoDataIsReversible:
         assert survivor.trade_ids == []
         assert survivor.sample_size == 0
         db.close()
+
+
+class TestLiveFillHookIsSingleSubscription:
+    """The page-side half of not double-counting fills.
+
+    TradingView's `executionUpdate` is a Delegate:
+
+        subscribe(object, member, singleShot) {
+          this._listeners.push({object, member, singleShot: !!singleShot, skip: false})
+        }
+
+    It calls *every* registered listener. So if the injected hook subscribes a
+    second time — on a reconnect, or after a page reload — each fill is reported
+    twice at source, before any Python code gets a say. The database side would
+    absorb a replayed fill idempotently, but two subscriptions also means two
+    screenshots and two notifications per fill.
+
+    Verified live against Desktop 3.3.0: listener count went 1 → 2 on install and
+    stayed at 2 when the install expression was evaluated again.
+    """
+
+    def test_the_hook_refuses_to_subscribe_twice(self) -> None:
+        from shani.market import tradingview_cdp as bridge
+
+        js = bridge._JS_INSTALL_EXEC_HOOK
+        assert "window.__shaniExecHook" in js, "no guard flag in the injected hook"
+        guard = js.index("if (!window.__shaniExecHook)")
+        subscribe = js.index("executionUpdate.subscribe")
+        assert guard < subscribe, (
+            "executionUpdate.subscribe is reached without first checking the "
+            "guard flag — a reinstall would deliver every fill twice"
+        )
+
+    def test_the_hook_asks_for_a_stream_as_well_as_listening(self) -> None:
+        """Both calls are required, and they do different jobs.
+
+        `subscribeExecutions(symbol)` takes no callback — it only tells the
+        broker connection to start sending. Subscribing to the delegate without
+        it can leave a silent stream; calling it without subscribing means
+        nobody is listening.
+        """
+        from shani.market import tradingview_cdp as bridge
+
+        js = bridge._JS_INSTALL_EXEC_HOOK
+        assert "subscribeExecutions(" in js
+        assert "executionUpdate.subscribe(" in js
+
+    def test_a_reporting_failure_cannot_break_the_traders_app(self) -> None:
+        """The hook runs inside the user's live trading application.
+
+        An exception thrown out of a delegate listener runs in TradingView's own
+        event dispatch. Shani is a guest in that process and must not be able to
+        interfere with it.
+        """
+        from shani.market import tradingview_cdp as bridge
+
+        send = bridge._JS_INSTALL_EXEC_HOOK[
+            bridge._JS_INSTALL_EXEC_HOOK.index("const send") :
+            bridge._JS_INSTALL_EXEC_HOOK.index("b.executionUpdate.subscribe")
+        ]
+        assert "try {" in send and "catch" in send, (
+            "the fill reporter is not wrapped in try/catch"
+        )
+
+    def test_the_binding_name_is_shared_between_python_and_the_page(self) -> None:
+        """A literal on either side that drifts leaves a stream nobody receives."""
+        from shani.market import tradingview_cdp as bridge
+
+        assert bridge.EXECUTION_BINDING in bridge._JS_INSTALL_EXEC_HOOK
+        assert f"window.{bridge.EXECUTION_BINDING}" in bridge._JS_INSTALL_EXEC_HOOK
+
+    def test_live_and_batch_parse_a_fill_through_the_same_function(self) -> None:
+        """One fill, one interpretation.
+
+        The live stream and the batch read receive the same execution shape. If
+        they parsed it separately, the two paths could disagree about a side or a
+        price and the trade table would hold both answers.
+        """
+        import inspect
+
+        from shani.market import tradingview_cdp as bridge
+
+        source = inspect.getsource(bridge.TradingViewDesktop.executions)
+        assert "_execution_from" in source
+        assert "_execution_from" in inspect.getsource(bridge.TradingViewDesktop.watch_executions)

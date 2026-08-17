@@ -15,6 +15,12 @@ project uses [semantic versioning](https://semver.org/spec/v2.0.0.html).
   trusted. Re-runnable: the whole history is re-read each time and each round
   trip is keyed on the fill that opened it, so a second run updates rather than
   duplicates, and any interview, notes or tags on an imported trade survive.
+- **Real-time fill capture.** `shani watch` streams fills from TradingView over
+  CDP as they happen, screenshots the chart at the moment of the fill, and opens
+  the interview the moment a round trip closes — while you still remember why you
+  took it. A fill is only a trigger: the trades themselves come from re-reading
+  and re-pairing the history, so live capture and `shani import` cannot produce
+  different rows.
 - `Trade.external_id`, recording a trade's identity at the venue it came from.
 - `shani demo --clear`. Everything the demo seeds is now tagged, so it can be
   taken back out again without touching your own trades. Previously the only

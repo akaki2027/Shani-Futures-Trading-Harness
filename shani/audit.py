@@ -54,6 +54,8 @@ class EventType:
     TRADE_OPENED = "trade.opened"
     TRADE_CLOSED = "trade.closed"
     TRADE_IMPORTED = "trade.imported"
+    FILL_OBSERVED = "fill.observed"
+    """A fill seen live at the venue, as opposed to one Shani placed itself."""
 
     INTERVIEW_STARTED = "interview.started"
     INTERVIEW_COMPLETED = "interview.completed"

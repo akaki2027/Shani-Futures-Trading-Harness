@@ -36,7 +36,9 @@ where to look. See ``NOTICE.md``.
 
 from __future__ import annotations
 
+import asyncio
 import json
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -406,6 +408,86 @@ _JS_ACCOUNT = """
 })()
 """ % _JS_BROKER
 
+# ─── Live fills ──────────────────────────────────────────────────────────────
+#
+# `subscribeExecutions(symbol)` is *not* the callback API its name suggests. It
+# takes a symbol and no callback:
+#
+#     subscribeExecutions(e) {
+#       void 0 !== this._brokerConnection.subscribeExecutions
+#         && this._brokerConnection.subscribeExecutions(e)
+#     }
+#
+# It only asks the broker connection to start streaming that symbol. The fills
+# themselves arrive on `executionUpdate`, a Delegate:
+#
+#     subscribe(object, member, singleShot) {
+#       this._listeners.push({ object, member, singleShot: !!singleShot, skip: false })
+#     }
+#
+# So both calls are needed: subscribe to the delegate to receive, and
+# subscribeExecutions per symbol to make anything be sent.
+#
+# Getting the event back out to Python uses `Runtime.addBinding`, which installs
+# a real function in the page whose calls surface as `Runtime.bindingCalled`
+# events on the CDP socket. That is a genuine push — no polling, and no interval
+# that could miss a fill between ticks.
+
+#: Name of the CDP binding installed in the page. Also the guard flag, so a
+#: reconnect cannot leave two subscriptions delivering every fill twice.
+EXECUTION_BINDING = "__shaniFill"
+
+_JS_INSTALL_EXEC_HOOK = """
+(async () => {
+  const b = %s;
+  if (!b) return { error: 'No trading account on this page - is a broker connected?' };
+  if (typeof window.%s !== 'function') {
+    return { error: 'Shani binding missing - Runtime.addBinding did not take' };
+  }
+
+  // Idempotent. Re-running this after a reconnect or a page reload must not
+  // add a second listener: the delegate calls every listener, so a duplicate
+  // subscription reports each fill twice and silently doubles the trade table.
+  if (!window.__shaniExecHook) {
+    const send = (execution) => {
+      try {
+        window.%s(JSON.stringify({
+          id: String(execution.id), symbol: execution.symbol,
+          price: execution.price, qty: execution.qty, side: execution.side,
+          time: execution.time,
+          commission: execution.commission == null ? null : execution.commission,
+        }));
+      } catch (e) { /* never let a reporting failure break the trader's app */ }
+    };
+    b.executionUpdate.subscribe(null, send);
+    window.__shaniExecHook = send;
+  }
+
+  // Ask for a stream on everything already traded plus whatever is on screen.
+  let executions = b.allExecutions();
+  if (executions && typeof executions.then === 'function') executions = await executions;
+  const symbols = new Set((executions || []).map(e => e.symbol));
+  try { symbols.add(window.TradingViewApi.activeChart().symbol()); } catch (e) {}
+
+  const subscribed = [];
+  for (const symbol of symbols) {
+    try { b.subscribeExecutions(symbol); subscribed.push(symbol); } catch (e) {}
+  }
+  return { ok: true, symbols: subscribed };
+})()
+""" % (_JS_BROKER, EXECUTION_BINDING, EXECUTION_BINDING)
+
+_JS_REMOVE_EXEC_HOOK = """
+(() => {
+  const b = %s;
+  if (b && window.__shaniExecHook) {
+    try { b.executionUpdate.unsubscribe(null, window.__shaniExecHook); } catch (e) {}
+  }
+  delete window.__shaniExecHook;
+  return { ok: true };
+})()
+""" % _JS_BROKER
+
 
 def _dec(value: Any) -> Decimal | None:
     """TradingView numbers → Decimal, via str so no float error is inherited."""
@@ -419,6 +501,23 @@ def _ts(value: Any) -> datetime | None:
     if value is None:
         return None
     return datetime.fromtimestamp(float(value) / 1000.0, tz=UTC)
+
+
+def _execution_from(raw: dict[str, Any]) -> TradingViewExecution:
+    """One execution dict → :class:`TradingViewExecution`.
+
+    Shared by the batch read and the live stream so a fill cannot be
+    interpreted one way when polled and another way when pushed.
+    """
+    return TradingViewExecution(
+        id=str(raw["id"]),
+        symbol=str(raw["symbol"]),
+        side=1 if int(raw["side"]) > 0 else -1,
+        quantity=int(raw["qty"]),
+        price=Decimal(str(raw["price"])),
+        time=_ts(raw.get("time")) or datetime.now(UTC),
+        commission=_dec(raw.get("commission")),
+    )
 
 
 class TradingViewDesktop:
@@ -591,18 +690,7 @@ class TradingViewDesktop:
         Sorting here means no caller can forget to.
         """
         raw = await self.evaluate(_JS_EXECUTIONS)
-        out = [
-            TradingViewExecution(
-                id=str(e["id"]),
-                symbol=str(e["symbol"]),
-                side=1 if int(e["side"]) > 0 else -1,
-                quantity=int(e["qty"]),
-                price=Decimal(str(e["price"])),
-                time=_ts(e["time"]) or datetime.now(UTC),
-                commission=_dec(e.get("commission")),
-            )
-            for e in raw.get("executions") or []
-        ]
+        out = [_execution_from(e) for e in raw.get("executions") or []]
         out.sort(key=lambda e: (e.time, e.id))
         return out
 
@@ -630,6 +718,92 @@ class TradingViewDesktop:
         ]
         out.sort(key=lambda o: (o.placed_at or datetime.min.replace(tzinfo=UTC), o.id))
         return out
+
+    async def watch_executions(self) -> AsyncIterator[TradingViewExecution]:
+        """Yield fills as they happen, for as long as the caller iterates.
+
+        A genuine push: the page calls a CDP binding, which arrives here as an
+        event on a socket that stays open. Nothing polls, so no fill can slip
+        between two ticks of an interval.
+
+        The hook is reinstalled whenever the page creates a new execution
+        context, which is what a reload or a navigation looks like from here —
+        otherwise a trader hitting refresh would silently stop the capture and
+        the first sign of it would be a missing trade. Reinstalling is safe
+        because the injected JS refuses to subscribe twice.
+
+        Raises :class:`TradingViewUnavailableError` if the connection drops, so
+        the caller decides whether to reconnect; this generator does not hide a
+        disconnection by quietly ending.
+        """
+        import websockets
+
+        ws_url = await self._find_target()
+        fills: asyncio.Queue[TradingViewExecution] = asyncio.Queue()
+
+        try:
+            async with websockets.connect(
+                ws_url, open_timeout=self.timeout, max_size=None
+            ) as ws:
+                pending: dict[int, dict[str, Any]] = {}
+
+                async def call(method: str, params: dict[str, Any] | None = None) -> None:
+                    self._message_id += 1
+                    pending[self._message_id] = {}
+                    await ws.send(
+                        json.dumps(
+                            {"id": self._message_id, "method": method, "params": params or {}}
+                        )
+                    )
+
+                await call("Runtime.enable")
+                await call("Page.enable")
+                await call("Runtime.addBinding", {"name": EXECUTION_BINDING})
+                await call(
+                    "Runtime.evaluate",
+                    {
+                        "expression": _JS_INSTALL_EXEC_HOOK,
+                        "returnByValue": True,
+                        "awaitPromise": True,
+                    },
+                )
+
+                async for raw in ws:
+                    message = json.loads(raw)
+                    method = message.get("method")
+
+                    if (
+                        method == "Runtime.bindingCalled"
+                        and message.get("params", {}).get("name") == EXECUTION_BINDING
+                    ):
+                        try:
+                            payload = json.loads(message["params"]["payload"])
+                        except (KeyError, ValueError):
+                            continue
+                        await fills.put(_execution_from(payload))
+
+                    elif method == "Runtime.executionContextCreated":
+                        # The page reloaded or navigated; the subscription died
+                        # with the old context. Reinstall into the new one.
+                        await call(
+                            "Runtime.evaluate",
+                            {
+                                "expression": _JS_INSTALL_EXEC_HOOK,
+                                "returnByValue": True,
+                                "awaitPromise": True,
+                            },
+                        )
+
+                    while not fills.empty():
+                        yield fills.get_nowait()
+        except TradingViewUnavailableError:
+            raise
+        except Exception as exc:
+            self._ws_url = None
+            raise TradingViewUnavailableError(
+                f"Live fill stream stopped: {exc}. TradingView may have been "
+                f"closed, restarted, or navigated."
+            ) from exc
 
     # ── screenshots ──────────────────────────────────────────────────────────
 

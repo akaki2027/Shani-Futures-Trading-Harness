@@ -34,7 +34,8 @@ Verified by running it, not just by tests passing.
 | Model settings | OpenRouter picker over 411 live models with pricing, two tiers, key write-only |
 | Portal | Next.js, dark, tabular figures, themed browser surfaces |
 | Trade import | **Built and run.** `shani import` reads the TradingView account and writes round trips. Reconciled to the cent against the account's own realized P&L |
-| The journal | **Real trades only.** The 60 demo rows and 6 `shani verify` artefacts were deleted on 2026-08-17; what remains is 25 imported trades. Stats are honest: net $4,717.50, 43.5% win rate, expectancy $188.70 |
+| Live fill capture | **Built and run.** `shani watch` streams fills over CDP, screenshots the chart at the fill, and opens the interview when a round trip closes |
+| The journal | **Real trades only.** The 60 demo rows and 6 `shani verify` artefacts were deleted on 2026-08-17; what remains is the imported history. Stats are honest |
 | Verification | `shani doctor` (components) and `shani verify` (seams). 390 tests, ruff + mypy strict clean |
 
 Run it:
@@ -55,9 +56,6 @@ Stated plainly so nobody rediscovers it as a surprise.
   `Volume/Details` answers HTTP 200 with a body of zeros. It fails *visibly* in
   `/api/drivers` rather than silently, which is the right failure mode but not a
   fix. Next thing to try is the settlements service with a valid trade date.
-- **Real-time fill capture.** Import is a pull, run by hand. `subscribeExecutions`
-  on the broker object is the event stream that would make a fill trigger the
-  screenshot and interview automatically, while it is fresh. Not wired up.
 - **NinjaTrader.** Documented stub only.
 - **Plane C end to end.** HMAC verified locally; no real inbound alert from
   TradingView's servers has been confirmed. Needs a tunnel.
@@ -135,12 +133,58 @@ all 66 pre-existing interviews intact.
 
 ---
 
+## Live capture, as built
+
+`shani watch`. Leave it running while you trade.
+
+### The two calls, and why both
+
+`subscribeExecutions` is **not** the callback API its name suggests:
+
+```js
+subscribeExecutions(e) {
+  void 0 !== this._brokerConnection.subscribeExecutions
+    && this._brokerConnection.subscribeExecutions(e)
+}
+```
+
+It takes a *symbol* and no callback — it only asks the connection to start
+sending. Fills arrive on `executionUpdate`, a Delegate whose contract is
+`subscribe(object, member, singleShot)`. Subscribe without `subscribeExecutions`
+and you may listen to a stream nobody is sending; call it without subscribing and
+nobody is listening.
+
+Page → Python uses CDP `Runtime.addBinding`, which makes calls to a page function
+arrive as `Runtime.bindingCalled` events on a socket held open. A genuine push,
+so no fill can fall between two polls.
+
+### Things that will bite
+
+- **The delegate calls every listener.** Subscribing twice reports each fill
+  twice, at source, before Python sees it. The injected JS guards on
+  `window.__shaniExecHook`; verified live, listeners went 1 → 2 on install and
+  stayed at 2 on reinstall. Do not remove that guard.
+- **A fill is only a trigger.** Every number comes from re-reading
+  `allExecutions()` and re-pairing through `shani.ingest.tradingview`, so live
+  capture and `shani import` cannot disagree — they are the same function of the
+  same data. Do not be tempted to keep a running position here instead; that is
+  two implementations of the pairing and one silent day where they differ.
+- **Priming must import first.** On a fresh database nothing is closed, so the
+  first fill re-reads the account and reports the entire history as having just
+  closed. Observed live: 26 trades announced at once, each with an interview and
+  a notification. `prime()` now imports and takes that as the starting line.
+- **The hook dies on page reload.** `watch_executions` reinstalls on
+  `Runtime.executionContextCreated`; without it a trader hitting refresh silently
+  stops the capture and the first sign is a missing trade.
+
+---
+
 ## Then, in rough priority
 
-1. **Real-time capture via `subscribeExecutions`.** The natural next step now
-   that fills parse cleanly: a fill fires the event, Shani grabs the chart and
-   screenshot and opens the interview while the trade is still fresh. Import
-   already proves the data shape; this only changes the trigger.
+1. **Run the watcher from `shani serve`.** Today it is a separate terminal. For
+   anyone who pulls the repo, "start the server and it captures your trades"
+   is the shape they expect; this needs a supervised background task with the
+   reconnect behaviour `watch()` already has.
 2. **Fix CME open interest.** OI distinguishes new money committing from an
    unwind; they look identical on a chart.
 3. **FRED key** — one paste, lights up VIX, breakevens and the dollar.

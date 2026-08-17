@@ -738,3 +738,94 @@ def import_trades(
             payload={"account": account, "inserted": inserted, "updated": updated},
         )
     console.print(f"\n  [green]{inserted} new[/green], {updated} updated.\n")
+
+
+@app.command()
+def watch(
+    screenshots: Annotated[
+        bool, typer.Option(help="Capture the chart at each fill.")
+    ] = True,
+    once: Annotated[
+        bool, typer.Option("--once", help="Exit on the first disconnect instead of retrying.")
+    ] = False,
+) -> None:
+    """Watch TradingView for fills and journal them as they happen.
+
+    Leave this running while you trade. The moment a fill lands, Shani captures
+    what your chart was showing, works out whether a round trip just closed, and
+    if one did, opens the interview and tells you — while you still remember why
+    you took it.
+
+    An hour later that answer is a reconstruction. That is the whole reason this
+    exists rather than just running `shani import` at the end of the day.
+
+    Safe to run alongside `shani import`; both produce the same trades from the
+    same history, so neither can duplicate the other's work.
+    """
+    import asyncio
+    import logging
+
+    from shani.agent.llm import build_llm
+    from shani.agent.reasoning import Agent
+    from shani.audit import AuditLog
+    from shani.db import Database
+    from shani.ingest.live import LiveCapture
+    from shani.ingest.live import watch as watch_fills
+    from shani.market.tradingview_cdp import TradingViewDesktop, TradingViewExecution
+    from shani.models import Trade
+    from shani.notify import Notifier
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    config = load_config()
+
+    with Database(config.db_path) as db:
+        audit = AuditLog(db)
+        try:
+            agent = Agent(db, build_llm(config.model), audit)
+        except Exception as exc:
+            # No model configured is not a reason to refuse to capture fills.
+            # The trade and the screenshot are still worth having; only the
+            # interview questions need a model.
+            console.print(f"[yellow]No model available ({exc}). Fills will be "
+                          f"captured, but no interview will be opened.[/yellow]")
+            agent = None
+
+        capture = LiveCapture(
+            db=db,
+            desktop=TradingViewDesktop(
+                host=config.tradingview.cdp_host, port=config.tradingview.cdp_port
+            ),
+            audit=audit,
+            agent=agent,
+            notifier=Notifier(),
+            screenshot_dir=config.screenshots if screenshots else None,
+            capture_screenshots=screenshots,
+        )
+
+        console.print("\n[bold]shani · watch[/bold]")
+        console.print("─" * 62)
+        console.print("  Watching TradingView for fills. Ctrl-C to stop.")
+        console.print(
+            f"  Screenshots: {'on → ' + str(config.screenshots) if screenshots else 'off'}"
+        )
+        console.print()
+
+        def announce(fill: TradingViewExecution, closed: list[Trade]) -> None:
+            console.print(
+                f"  [dim]{fill.time.strftime('%H:%M:%S')}[/dim]  "
+                f"{fill.symbol} "
+                f"{'buy' if fill.is_buy else 'sell'} "
+                f"{fill.quantity} @ {fill.price}"
+            )
+            for trade in closed:
+                net = trade.net_pnl
+                colour = "green" if net > 0 else "red"
+                console.print(
+                    f"        [bold {colour}]round trip closed[/bold {colour}] "
+                    f"{trade.symbol} {net:+,.2f} — interview opened"
+                )
+
+        try:
+            asyncio.run(watch_fills(capture, reconnect=not once, on_event=announce))
+        except KeyboardInterrupt:
+            console.print("\n  Stopped watching.\n")
