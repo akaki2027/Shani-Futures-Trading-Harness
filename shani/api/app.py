@@ -508,6 +508,38 @@ def build_app(config: Config | None = None) -> FastAPI:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
         return _trade_json(trade, full=True)
 
+    @app.post("/api/trades/import", dependencies=auth)
+    async def import_trades() -> dict[str, Any]:
+        """Import the trade history from the connected TradingView account.
+
+        Safe to run repeatedly. The whole history is re-read each time and each
+        round trip lands on an id derived from its opening fill, so a second run
+        updates the same rows rather than inserting a second copy.
+        """
+        from shani.ingest.tradingview import import_from_desktop
+        from shani.market.tradingview_cdp import (
+            TradingViewDesktop,
+            TradingViewUnavailableError,
+        )
+
+        try:
+            report = await import_from_desktop(
+                db, TradingViewDesktop(), audit=audit
+            )
+        except TradingViewUnavailableError as exc:
+            # 503, not 500: nothing is broken, TradingView just is not reachable,
+            # and the message says exactly what to do about it.
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)
+            ) from exc
+
+        return {
+            "imported": report.count,
+            "open": report.open_trips,
+            "skipped": report.skipped,
+            "gross_pnl": str(report.imported_pnl),
+        }
+
     @app.post("/api/trades/{trade_id}/extract", dependencies=auth)
     def extract(trade_id: UUID) -> dict[str, Any]:
         """Turn an answered interview into a setup card."""

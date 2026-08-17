@@ -402,6 +402,18 @@ class Trade(SyncRecord):
     tags: list[str] = Field(default_factory=list)
     broker: str = "paper"
 
+    #: Stable identity of this round trip at the venue it was imported from,
+    #: e.g. ``"tradingview:34862113:CME_MINI:MESU2026:2479343643"``. Null for
+    #: trades Shani executed itself.
+    #:
+    #: Import re-reads the *whole* history every time, so this is what stops a
+    #: second import inserting 25 duplicate trades. The record's UUID is derived
+    #: from this string (see :func:`shani.ingest.tradingview.trade_uuid`), which
+    #: makes a re-import an idempotent overwrite rather than an insert — the
+    #: duplicate is impossible by construction rather than prevented by a check
+    #: someone can forget to run.
+    external_id: str | None = None
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def net_pnl(self) -> Decimal:

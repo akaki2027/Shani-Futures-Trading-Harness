@@ -26,7 +26,8 @@ Verified by running it, not just by tests passing.
 | Market drivers | CFTC COT and US Treasury curve, mapped per market by exact contract code |
 | Model settings | OpenRouter picker over 411 live models with pricing, two tiers, key write-only |
 | Portal | Next.js, dark, tabular figures, themed browser surfaces |
-| Verification | `shani doctor` (components) and `shani verify` (seams). 365 tests, ruff + mypy strict clean |
+| Trade import | **Built and run.** `shani import` reads the TradingView account and writes round trips. Reconciled to the cent against the account's own realized P&L |
+| Verification | `shani doctor` (components) and `shani verify` (seams). 390 tests, ruff + mypy strict clean |
 
 Run it:
 
@@ -46,7 +47,9 @@ Stated plainly so nobody rediscovers it as a surprise.
   `Volume/Details` answers HTTP 200 with a body of zeros. It fails *visibly* in
   `/api/drivers` rather than silently, which is the right failure mode but not a
   fix. Next thing to try is the settlements service with a valid trade date.
-- **TradingView trade import.** Not built. Mechanism now understood — see below.
+- **Real-time fill capture.** Import is a pull, run by hand. `subscribeExecutions`
+  on the broker object is the event stream that would make a fill trigger the
+  screenshot and interview automatically, while it is fresh. Not wired up.
 - **NinjaTrader.** Documented stub only.
 - **Plane C end to end.** HMAC verified locally; no real inbound alert from
   TradingView's servers has been confirmed. Needs a tunnel.
@@ -56,70 +59,92 @@ Stated plainly so nobody rediscovers it as a surprise.
 
 ---
 
-## Next goal: import TradingView trades
+## The trade importer, as built
 
-The feature the owner wants most, and the one with the highest blast radius if
-done carelessly — every statistic, setup card and "you have taken this seven
-times" claim is computed from the trade table.
+`shani import` — add `--dry-run` to see it without writing. Also
+`POST /api/trades/import`.
 
-### What was established
+Against the owner's account it reads 56 fills and 97 orders, produces 25 round
+trips, and skips 2 (see below).
 
-- The owner's instrument is **`MESU2026`** — Micro E-mini S&P 500, Sep 2026 →
-  Shani's `MES`. Contract specs already exist.
-- Correct CDP target is the `/chart/...` page where the account manager is
-  mounted. Desktop exposes ~12 targets including internal `file://` shells; only
-  one has the panel.
-- `TradingViewApi.trading()` resolves and exposes `_activeBroker`,
-  `_ordersService`, `_positionService`, `_account`.
-- `_activeBroker` has **`subscribeExecutions` / `unsubscribeExecutions`** — the
-  fill event stream, and the right trigger for the whole loop.
-- **`_orders` and `_individualPositions` are live state, not history.** They are
-  legitimately empty when nothing is resting or open. Closed trades live in the
-  **Order history** tab.
+### Do not go back to the DOM
 
-### The root cause of every failed read
+The previous session concluded the fix was to click the Order history tab and
+scrape the grid. **That works but is the wrong door.** `_activeBroker` exposes
+`allExecutions()`, `ordersHistory()` and `currentAccount()`, which return
+structured objects — real numbers, epoch milliseconds, stable ids — and need no
+tab to be active at all. The virtualised-grid problem simply does not arise, and
+neither does parsing `"7,801.75"` or guessing which timezone
+`"2026-08-17 09:50:03"` was rendered in. A seam test now fails if any of those
+expressions reaches for `querySelector`.
 
-**TradingView's grids are virtualised — only the active tab is rendered.** If
-Order history is not the selected tab when you read, its rows do not exist in
-the DOM at all, regardless of what is in the account. This is why probe results
-flip-flopped: each read hit whatever tab happened to be up. An early attempt to
-find "the biggest repeating row group" returned the *watchlist* (DJI, SPX, VIX)
-rather than any trade.
+The DOM was still worth reading once: its tab counts (All 97, Filled 56,
+Cancelled 40, Rejected 1) are what confirmed the numeric status codes.
 
-### Build order
+### The bug that mattered
 
-1. **Activate the tab, then read.** Click Order history, wait for rows, read,
-   then restore the tab the user had selected. Do not leave their UI changed.
-2. **Dump one real row verbatim** before writing any mapping. Field names, price
-   types and partial-fill representation are all still unverified. Do not guess.
-3. **Extend Plane B only**, in `shani/market/tradingview_cdp.py`. The one-file
-   rule exists because TradingView will change these internals.
-4. **Map to `Trade`.** `Trade.contract` already exists for the dated-versus-
-   continuous distinction (`MESU2026` vs `MES`). Tick values and P&L must keep
-   coming from `shani/instruments.py` — one source of truth for money.
-5. **Reconcile, never duplicate.** Needs a stable external id so a re-read
-   updates rather than inserts. Highest-risk part of the feature.
-6. **Then subscribe** via `subscribeExecutions` for real time, so a fill triggers
-   chart capture, screenshot, and the interview while it is fresh.
-7. **Seam tests.** Import is a boundary; a silent double-count would pass every
-   unit test. See `CONTRIBUTING.md` rule 5.
+The first pairing implementation ran **one position across every symbol**. The
+account holds MES near 7,700, MNQ near 29,000, SPY near 765 — so positions never
+closed against their own instrument, and it produced round trips with an entry
+of 4,234.945 and a P&L of **-$346,879** on an account that had made $4,722.78.
+Nothing threw. Pair per symbol; prices from two instruments must never meet in
+the same subtraction. `test_symbols_are_paired_independently` pins it.
 
-### Opening move for the next session
+### How it was verified
 
-> build the TradingView importer — click Order history, read the grid, map
-> MESU2026 to MES
+Not by the tests passing. The algorithm was run against the real account and its
+total realized P&L reproduced TradingView's own figure for that account —
+**$4,722.78** — exactly, across 25 round trips in 5 symbols. That is the check
+worth repeating after any change to the pairing.
+
+Then imported twice: `25 new, 0 updated` followed by `0 new, 25 updated`, with
+all 66 pre-existing interviews intact.
+
+### Decisions worth knowing before changing it
+
+- **Round trips are flat-to-flat, per symbol.** Scale-ins and scale-outs collapse
+  into one trade with size-weighted prices. A single fill that reverses a
+  position is split into a close and a new open.
+- **Ids are derived, not looked up.** `trade_uuid(external_id)` is a `uuid5`, so
+  a re-import lands on the same row. Duplicates are impossible by construction
+  rather than prevented by a check someone can forget. Changing that namespace
+  re-imports the entire history as new rows.
+- **Re-import merges, never replaces.** `PRESERVED_ON_REIMPORT` lists what is
+  carried across — interview, notes, tags, setup card, screenshot. The venue can
+  always be re-read; what the trader said cannot.
+- **Commission is `None`, not zero.** The paper account charges nothing.
+  Synthesising a plausible commission would make imported P&L disagree with the
+  number TradingView shows the owner.
+- **SPY and SPXX are skipped, loudly.** Shani prices futures from a contract spec
+  and will not invent a multiplier. Consequence: imported P&L is $4,717.50, short
+  of the account's $4,722.78 by exactly the equities. That gap is expected, and
+  the CLI says so rather than letting it look like a discrepancy.
+- **Brackets are matched heuristically, and decline when ambiguous.** 20 of 25
+  trades get a stop and therefore an R. The other 5 are genuine: two had no
+  bracket at all, three were fired within six minutes at nearly identical prices
+  with overlapping brackets. An unknown R is `None` and is excluded from
+  statistics; a guessed one would be averaged in as fact.
 
 ---
 
 ## Then, in rough priority
 
-1. **Fix CME open interest.** OI distinguishes new money committing from an
+1. **Real-time capture via `subscribeExecutions`.** The natural next step now
+   that fills parse cleanly: a fill fires the event, Shani grabs the chart and
+   screenshot and opens the interview while the trade is still fresh. Import
+   already proves the data shape; this only changes the trigger.
+2. **Separate the demo trades from the real ones.** The database now holds 66
+   synthetic trades from `shani demo` alongside 25 imported real ones, and
+   `/api/stats` pools all 91. Every statistic the portal shows is currently part
+   fiction. Either drop the demo rows or teach the stats layer to exclude them —
+   this is now the biggest correctness problem in the project.
+3. **Fix CME open interest.** OI distinguishes new money committing from an
    unwind; they look identical on a chart.
-2. **FRED key** — one paste, lights up VIX, breakevens and the dollar.
-3. **Plane C end to end** — Cloudflare tunnel, one real Pine alert.
-4. **NinjaTrader read-only capture** — lower value now that TradingView import
+4. **FRED key** — one paste, lights up VIX, breakevens and the dollar.
+5. **Plane C end to end** — Cloudflare tunnel, one real Pine alert.
+6. **NinjaTrader read-only capture** — lower value now that TradingView import
    is understood, but still the path for anyone trading through NT8.
-5. **Push to GitHub.** Repo is clean: no `.env` or database tracked, CI fails the
+7. **Push to GitHub.** Repo is clean: no `.env` or database tracked, CI fails the
    build if either ever is.
 
 ---
@@ -136,6 +161,18 @@ rather than any trade.
   `window.TradingViewApi`. Most published guides get this wrong.
 - **Never edit source with PowerShell `Set-Content`.** It re-encodes and turns
   every em dash into mojibake. Cost 24 corrupted characters in `drivers.py`.
+- **TradingView writes contract years with four digits** in the account manager
+  (`CME_MINI:MESU2026`) while its charts use `MES1!`. `root_of` parses 4-, 2- and
+  1-digit years, widest first, or `MESU2026` reads as root `MESU2` and raises.
+- **An order's `closeDate` is not its fill time** — it trails by about 11 seconds
+  on a limit entry, so matching the two for equality silently finds nothing.
+- **A bracket is placed when the entry is *submitted*, not when it fills.** A
+  resting limit entry can sit for minutes first; anchoring the bracket search on
+  the fill time appears to work on market entries and misses every limit one.
+- **The console commands need a UTF-8 stdout.** `shani doctor`, `verify` and
+  `import` all print box-drawing characters, and piping them anywhere on Windows
+  raises `UnicodeEncodeError` under the cp1252 default. Fine in Windows Terminal;
+  set `PYTHONIOENCODING=utf-8` when redirecting. Pre-existing, not yet fixed.
 - **Every bug that reached the user lived at a seam**, while unit tests stayed
   green throughout. That is why `tests/test_integration.py` and `shani verify`
   exist. Add to them when changing a boundary.

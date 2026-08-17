@@ -382,18 +382,257 @@ class TestPlaneBIsolation:
 
         assert _JS_WIDGET.index("window.TradingViewApi") < _JS_WIDGET.index("window.tvWidget")
 
-    def test_every_evaluated_expression_uses_the_shared_resolver(self) -> None:
-        """A new expression that hardcodes one global reintroduces the bug."""
+    def test_every_evaluated_expression_uses_a_shared_resolver(self) -> None:
+        """A new expression that hardcodes a global reintroduces the bug.
+
+        There are two entry points, and they are not interchangeable:
+
+        ``_JS_WIDGET`` resolves the *chart*, and must try ``TradingViewApi``
+        before ``tvWidget`` for the reason above.
+
+        ``_JS_BROKER`` resolves the *trading account*, and deliberately names
+        only ``TradingViewApi``. The trading API is part of the application;
+        an embeddable Charting Library widget has no broker at all, so there is
+        no second global to fall back to and pretending otherwise would only
+        hide a real failure behind a confusing one.
+        """
         from shani.market import tradingview_cdp as bridge
 
-        expressions = [
-            value for name, value in vars(bridge).items()
-            if name.startswith("_JS_") and name != "_JS_WIDGET" and isinstance(value, str)
-        ]
+        expressions = {
+            name: value for name, value in vars(bridge).items()
+            if name.startswith("_JS_")
+            and name not in {"_JS_WIDGET", "_JS_BROKER"}
+            and isinstance(value, str)
+        }
         assert expressions, "no evaluated expressions found — has the module moved?"
-        for expression in expressions:
-            if "window.tvWidget" in expression or "window.TradingViewApi" in expression:
-                assert "window.TradingViewApi" in expression and "window.tvWidget" in expression, (
-                    "an expression names one chart global directly instead of "
-                    "using the _JS_WIDGET resolver"
-                )
+        for name, expression in expressions.items():
+            if "window.tvWidget" not in expression and "window.TradingViewApi" not in expression:
+                continue
+            uses_widget = bridge._JS_WIDGET.strip() in expression
+            uses_broker = bridge._JS_BROKER.strip() in expression
+            assert uses_widget or uses_broker, (
+                f"{name} names a TradingView global directly instead of "
+                f"embedding the _JS_WIDGET or _JS_BROKER resolver"
+            )
+
+    def test_the_broker_resolver_goes_through_the_trading_api(self) -> None:
+        """Reading the account must not depend on the Account Manager DOM.
+
+        The grid is virtualised — only the selected tab is rendered — so a DOM
+        read returns whatever tab the trader happens to have up, which is how an
+        early attempt came back with the watchlist instead of any trade. Going
+        through the broker object needs no tab to be active.
+        """
+        from shani.market import tradingview_cdp as bridge
+
+        assert "trading()" in bridge._JS_BROKER
+        assert "_activeBroker" in bridge._JS_BROKER
+        for name in ("_JS_EXECUTIONS", "_JS_ORDER_HISTORY", "_JS_ACCOUNT"):
+            expression = getattr(bridge, name)
+            assert bridge._JS_BROKER.strip() in expression, f"{name} bypasses _JS_BROKER"
+            assert "querySelector" not in expression, (
+                f"{name} reads the DOM; the account manager grid is virtualised "
+                f"and only renders the selected tab"
+            )
+
+
+class TestTradingViewImportIsIdempotent:
+    """Importing the trade history twice must not double the trade table.
+
+    This is the seam the whole import feature turns on. Every unit test of the
+    pairing can pass while this fails, because pairing is a pure function and
+    knows nothing about the database it lands in — and the failure is silent.
+    Nothing errors; the trader just opens the portal and sees fifty trades where
+    there should be twenty-five, with every win rate and expectancy computed off
+    the doubled table.
+
+    The import deliberately re-reads the *entire* history each time rather than
+    tracking a high-water mark, so "run it twice" is the normal case, not an
+    edge case.
+    """
+
+    @staticmethod
+    def _fills() -> list[Any]:
+        from datetime import UTC, datetime, timedelta
+        from decimal import Decimal
+
+        from shani.market.tradingview_cdp import TradingViewExecution
+
+        base = datetime(2026, 8, 12, 15, 0, tzinfo=UTC)
+        prices = [("7764", 1), ("7772.25", -1), ("7805", 1), ("7803.25", -1)]
+        return [
+            TradingViewExecution(
+                id=f"e{i}", symbol="CME_MINI:MESU2026", side=side, quantity=10,
+                price=Decimal(price), time=base + timedelta(minutes=10 * i),
+            )
+            for i, (price, side) in enumerate(prices)
+        ]
+
+    def test_importing_twice_leaves_one_copy_of_each_trade(self, tmp_path: Path) -> None:
+        from shani.db import Database
+        from shani.ingest.tradingview import build_trades, save_trades
+
+        db = Database(tmp_path / "import.db")
+        fills = self._fills()
+
+        first = build_trades(fills, account="34862113")
+        inserted, updated = save_trades(db, first)
+        assert (inserted, updated) == (2, 0)
+        assert db.trades.count() == 2
+
+        second = build_trades(fills, account="34862113")
+        inserted, updated = save_trades(db, second)
+        assert (inserted, updated) == (0, 2), "re-import inserted instead of updating"
+        assert db.trades.count() == 2, "the trade table doubled on re-import"
+        db.close()
+
+    def test_reimport_does_not_erase_the_interview(self, tmp_path: Path) -> None:
+        """The half of idempotency that a row count cannot catch.
+
+        Not duplicating is not enough — a re-import that *overwrites* is just as
+        destructive, because the interview is the one field that cannot be
+        regenerated. The venue can always be re-read; what the trader said about
+        the trade at the time cannot.
+        """
+        from shani.db import Database
+        from shani.ingest.tradingview import build_trades, save_trades
+        from shani.models import InterviewAnswer
+
+        db = Database(tmp_path / "import.db")
+        fills = self._fills()
+        save_trades(db, build_trades(fills, account="34862113"))
+
+        trade = db.trades.all()[0]
+        trade.interview = [
+            InterviewAnswer(question="What did you see?", answer="Failed breakdown at the low.")
+        ]
+        trade.notes = "Waited for the reclaim."
+        trade.tags = ["reclaim"]
+        db.trades.save(trade)
+
+        save_trades(db, build_trades(fills, account="34862113"))
+
+        after = db.trades.get(trade.id)
+        assert after is not None
+        assert after.notes == "Waited for the reclaim."
+        assert after.tags == ["reclaim"]
+        assert [a.answer for a in after.interview] == ["Failed breakdown at the low."]
+        db.close()
+
+    def test_a_new_trade_is_added_without_disturbing_the_old_ones(self, tmp_path: Path) -> None:
+        """The realistic case: import, trade again, import again."""
+        from datetime import timedelta
+        from decimal import Decimal
+
+        from shani.db import Database
+        from shani.ingest.tradingview import build_trades, save_trades
+        from shani.market.tradingview_cdp import TradingViewExecution
+
+        db = Database(tmp_path / "import.db")
+        fills = self._fills()
+        save_trades(db, build_trades(fills, account="34862113"))
+        original_ids = {t.id for t in db.trades.all()}
+
+        later = fills[-1].time + timedelta(hours=1)
+        fills += [
+            TradingViewExecution(
+                id="e98", symbol="CME_MINI:MESU2026", side=-1, quantity=10,
+                price=Decimal("7807"), time=later,
+            ),
+            TradingViewExecution(
+                id="e99", symbol="CME_MINI:MESU2026", side=1, quantity=10,
+                price=Decimal("7801.75"), time=later + timedelta(minutes=20),
+            ),
+        ]
+        inserted, updated = save_trades(db, build_trades(fills, account="34862113"))
+        assert (inserted, updated) == (1, 2)
+        assert db.trades.count() == 3
+        assert original_ids < {t.id for t in db.trades.all()}
+        db.close()
+
+
+class TestImportEndpoint:
+    """The import route, where it sits in the router and how it fails."""
+
+    def test_import_path_is_not_swallowed_by_the_trade_detail_route(
+        self, client: TestClient
+    ) -> None:
+        """``/api/trades/import`` must not be parsed as a trade id.
+
+        ``/api/trades/{trade_id}`` is declared first and would happily try to
+        read "import" as a UUID. It does not today only because that route is a
+        GET and this one is a POST — which is a load-bearing detail that a
+        future refactor could quietly remove.
+        """
+        response = client.post("/api/trades/import")
+        assert response.status_code != 422, (
+            "'import' was parsed as a trade_id — the detail route is shadowing "
+            "the import route"
+        )
+
+    def test_unreachable_tradingview_is_503_with_instructions(
+        self, client: TestClient, monkeypatch: Any
+    ) -> None:
+        """Not a 500. Nothing is broken; TradingView just is not running.
+
+        The distinction matters because the error text is the only place the
+        user is told to relaunch Desktop with the debug flag.
+        """
+        from shani.market import tradingview_cdp
+
+        async def refuse(self: Any) -> Any:
+            raise tradingview_cdp.TradingViewUnavailableError(
+                "Cannot reach the TradingView debug port at http://localhost:9222."
+            )
+
+        monkeypatch.setattr(tradingview_cdp.TradingViewDesktop, "account_id", refuse)
+        response = client.post("/api/trades/import")
+        assert response.status_code == 503
+        assert "debug port" in response.json()["detail"]
+
+    def test_successful_import_reports_what_it_did(
+        self, client: TestClient, monkeypatch: Any
+    ) -> None:
+        from datetime import UTC, datetime, timedelta
+        from decimal import Decimal
+
+        from shani.market import tradingview_cdp
+        from shani.market.tradingview_cdp import TradingViewExecution
+
+        base = datetime(2026, 8, 12, 15, 0, tzinfo=UTC)
+        fills = [
+            TradingViewExecution(
+                id="e0", symbol="CME_MINI:MESU2026", side=1, quantity=10,
+                price=Decimal("7764"), time=base,
+            ),
+            TradingViewExecution(
+                id="e1", symbol="CME_MINI:MESU2026", side=-1, quantity=10,
+                price=Decimal("7772.25"), time=base + timedelta(minutes=20),
+            ),
+        ]
+
+        async def account(self: Any) -> str:
+            return "34862113"
+
+        async def executions(self: Any) -> Any:
+            return fills
+
+        async def orders(self: Any) -> Any:
+            return []
+
+        monkeypatch.setattr(tradingview_cdp.TradingViewDesktop, "account_id", account)
+        monkeypatch.setattr(tradingview_cdp.TradingViewDesktop, "executions", executions)
+        monkeypatch.setattr(tradingview_cdp.TradingViewDesktop, "order_history", orders)
+
+        body = client.post("/api/trades/import").json()
+        assert body["imported"] == 1
+        assert body["gross_pnl"] == "412.50"
+        assert body["skipped"] == {}
+
+        # And the trade is actually queryable through the portal's own route.
+        trades = client.get("/api/trades").json()
+        assert any(t["symbol"] == "MES" for t in trades)
+
+        # Second import must not double it.
+        assert client.post("/api/trades/import").json()["imported"] == 1
+        assert len([t for t in client.get("/api/trades").json() if t["symbol"] == "MES"]) == 1

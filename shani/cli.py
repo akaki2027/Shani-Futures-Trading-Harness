@@ -15,7 +15,7 @@ import asyncio
 import secrets
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 from rich.console import Console
@@ -561,3 +561,104 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+@app.command(name="import")
+def import_trades(
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Show what would be imported, write nothing.")
+    ] = False,
+) -> None:
+    """Import your trade history from the connected TradingView account.
+
+    Safe to run as often as you like. The whole history is re-read each time and
+    each round trip is keyed on the fill that opened it, so running this twice
+    updates the same rows instead of creating a second copy of every trade.
+    Anything you have added yourself — an interview, notes, tags, the setup card
+    a trade was matched to — survives a re-import untouched.
+    """
+    import asyncio
+
+    from shani.audit import AuditLog
+    from shani.db import Database
+    from shani.ingest.tradingview import build_trades, save_trades
+    from shani.market.tradingview_cdp import (
+        TradingViewDesktop,
+        TradingViewUnavailableError,
+    )
+
+    config = load_config()
+    desktop = TradingViewDesktop(
+        host=config.tradingview.cdp_host, port=config.tradingview.cdp_port
+    )
+
+    async def read() -> tuple[str | None, Any, Any]:
+        return (
+            await desktop.account_id(),
+            await desktop.executions(),
+            await desktop.order_history(),
+        )
+
+    try:
+        account, executions, orders = asyncio.run(read())
+    except TradingViewUnavailableError as exc:
+        console.print(f"\n[red]{exc}[/red]\n")
+        raise typer.Exit(1) from exc
+
+    report = build_trades(executions, orders, account=account)
+
+    console.print(f"\n[bold]shani · import[/bold]  →  TradingView account {account}")
+    console.print("─" * 62)
+    console.print(f"  {len(executions)} fills, {len(orders)} orders read")
+    console.print(f"  {report.count} round trips priced from shani/instruments.py")
+    if report.open_trips:
+        console.print(f"  {report.open_trips} still open")
+
+    if report.skipped:
+        detail = ", ".join(f"{root} ×{n}" for root, n in sorted(report.skipped.items()))
+        console.print(
+            f"\n[yellow]  Skipped {report.skipped_count} round trips: {detail}[/yellow]"
+        )
+        console.print(
+            "        Shani prices futures from a contract spec and will not "
+            "guess a\n        multiplier. Their P&L is therefore not counted "
+            "below, so the total\n        will differ from the figure "
+            "TradingView shows for the account."
+        )
+
+    table = Table(box=None, pad_edge=False)
+    for column, justify in (
+        ("When", "left"), ("Symbol", "left"), ("Side", "left"), ("Qty", "right"),
+        ("Entry", "right"), ("Exit", "right"), ("Net", "right"), ("R", "right"),
+    ):
+        table.add_column(column, justify=justify)  # type: ignore[arg-type]
+    for trade in report.trades[-12:]:
+        r = trade.r_multiple
+        net = trade.net_pnl
+        table.add_row(
+            f"{trade.entry_at:%m-%d %H:%M}",
+            trade.contract or trade.symbol,
+            trade.side.value,
+            str(trade.quantity),
+            str(trade.entry_price),
+            str(trade.exit_price) if trade.exit_price is not None else "open",
+            f"[green]{net}[/green]" if net > 0 else f"[red]{net}[/red]",
+            f"{r:+.2f}" if r is not None else "—",
+        )
+    console.print()
+    console.print(table)
+    console.print(f"\n  Gross P&L imported: [bold]{report.imported_pnl}[/bold]")
+
+    if dry_run:
+        console.print("\n[yellow]  --dry-run: nothing written.[/yellow]\n")
+        return
+
+    with Database(config.db_path) as db:
+        inserted, updated = save_trades(db, report)
+        AuditLog(db).record(
+            "trade.imported",
+            f"Imported {report.count} round trips from TradingView account "
+            f"{account} ({inserted} new, {updated} updated)",
+            payload={"account": account, "inserted": inserted, "updated": updated},
+        )
+    console.print(f"\n  [green]{inserted} new[/green], {updated} updated.\n")

@@ -5,6 +5,24 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this
 project uses [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **TradingView trade import.** `shani import` (and `POST /api/trades/import`)
+  reads the connected TradingView account and turns its fills into round trips.
+  Reconciled against the account's own realized P&L to the cent before being
+  trusted. Re-runnable: the whole history is re-read each time and each round
+  trip is keyed on the fill that opened it, so a second run updates rather than
+  duplicates, and any interview, notes or tags on an imported trade survive.
+- `Trade.external_id`, recording a trade's identity at the venue it came from.
+
+### Fixed
+
+- `root_of` and `parse_contract` now understand four-digit contract years, so
+  `CME_MINI:MESU2026` resolves to `MES` instead of raising. TradingView's
+  account manager uses this form even though its charts use `MES1!`.
+
 ## [0.1.0] — 2026-08-09
 
 First release. Alpha.

@@ -289,9 +289,11 @@ class UnknownInstrumentError(KeyError):
 def root_of(symbol: str) -> str:
     """Extract the contract root from any symbol form Shani might see.
 
-    Handles ``ES``, ``ESZ5``, ``ESZ25``, ``ES1!``, ``CME:ES1!``, ``CME_MINI:ES1!``.
-    All of these appear in practice: TradingView uses the continuous form, the
-    broker uses the dated form, and users type the bare root.
+    Handles ``ES``, ``ESZ5``, ``ESZ25``, ``ESZ2025``, ``ES1!``, ``CME:ES1!``,
+    ``CME_MINI:ES1!``. All of these appear in practice: TradingView uses the
+    continuous form for charting but the **four-digit** dated form in the
+    account manager (``CME_MINI:MESU2026``), the broker uses the dated form, and
+    users type the bare root.
     """
     s = symbol.strip().upper()
     if ":" in s:
@@ -299,10 +301,11 @@ def root_of(symbol: str) -> str:
     if s.endswith("!"):
         s = s.rstrip("!").rstrip("0123456789")
         return s
-    # Dated contract: strip a trailing 1-2 digit year and its month code, but
-    # only when what remains is a root we recognise. This avoids mangling roots
-    # that legitimately end in a month-code letter.
-    for width in (2, 1):
+    # Dated contract: strip a trailing 1, 2 or 4 digit year and its month code,
+    # but only when what remains is a root we recognise. This avoids mangling
+    # roots that legitimately end in a month-code letter. Widest year first, so
+    # ``MESU2026`` is not mis-read as root ``MESU2`` with a two-digit year.
+    for width in (4, 2, 1):
         if len(s) > width + 1 and s[-width:].isdigit() and s[-(width + 1)] in MONTH_CODES:
             candidate = s[: -(width + 1)]
             if candidate in INSTRUMENTS:
@@ -322,7 +325,8 @@ def get_instrument(symbol: str) -> Instrument:
 def parse_contract(symbol: str) -> tuple[str, int, int] | None:
     """Parse a dated contract into ``(root, month, year)``.
 
-    ``"ESZ5"`` → ``("ES", 12, 2025)``; ``"ESZ25"`` → ``("ES", 12, 2025)``.
+    ``"ESZ5"`` → ``("ES", 12, 2025)``; ``"ESZ25"`` → ``("ES", 12, 2025)``;
+    ``"MESU2026"`` → ``("MES", 9, 2026)``.
 
     Single-digit years are resolved into the current decade, which is what the
     exchanges mean by them. Returns ``None`` for continuous or bare symbols,
@@ -334,7 +338,8 @@ def parse_contract(symbol: str) -> tuple[str, int, int] | None:
     if s.endswith("!") or not s:
         return None
 
-    for width in (2, 1):
+    # Widest year first — see the note in root_of.
+    for width in (4, 2, 1):
         if len(s) <= width + 1:
             continue
         digits, code = s[-width:], s[-(width + 1)]
@@ -352,8 +357,9 @@ def parse_contract(symbol: str) -> tuple[str, int, int] | None:
             # decade — in 2029, "ESZ1" is December 2031, not 2021.
             if year < current - 3:
                 year += 10
-        else:
+        elif width == 2:
             year += 2000
+        # width == 4 is already a full year.
         return root, MONTH_CODES[code], year
     return None
 

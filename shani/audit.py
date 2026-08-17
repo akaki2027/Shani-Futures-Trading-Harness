@@ -53,6 +53,7 @@ class EventType:
 
     TRADE_OPENED = "trade.opened"
     TRADE_CLOSED = "trade.closed"
+    TRADE_IMPORTED = "trade.imported"
 
     INTERVIEW_STARTED = "interview.started"
     INTERVIEW_COMPLETED = "interview.completed"

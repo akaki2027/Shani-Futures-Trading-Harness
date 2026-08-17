@@ -1,6 +1,24 @@
 # Importing TradingView trades into Shani
 
-**Status: verified feasible, not yet built.**
+**Status: built and running.** `shani import`, or `POST /api/trades/import`.
+
+This page is kept as the record of the spike that made it possible. Where the
+finished importer diverged from the plan below, the plan was wrong:
+
+- **It reads the broker object, not the Account Manager grid.** The plan was to
+  click the Order history tab and scrape rows. `_activeBroker.allExecutions()`
+  and `.ordersHistory()` return structured objects with real numbers and epoch
+  milliseconds, need no tab to be active, and make the virtualised-grid problem
+  and every timezone question disappear.
+- **Pairing must be per symbol.** The first attempt ran one position across all
+  five symbols in the account and produced a -$346,879 round trip without
+  raising anything. See `HANDOFF.md`.
+- **Correctness was established by reconciliation**, not by tests: total imported
+  P&L reproduces TradingView's own realized P&L for the account to the cent.
+
+The original spike follows.
+
+---
 
 This page records a spike that overturned an earlier conclusion. Shani's docs
 previously said trades placed in TradingView could not reach the journal. That

@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -47,6 +48,8 @@ __all__ = [
     "ChartState",
     "PineDiagnostic",
     "TradingViewDesktop",
+    "TradingViewExecution",
+    "TradingViewOrder",
     "TradingViewUnavailableError",
 ]
 
@@ -88,6 +91,65 @@ class PineDiagnostic:
     line: int | None
     column: int | None
     message: str
+
+
+@dataclass(frozen=True, slots=True)
+class TradingViewExecution:
+    """One fill in the trader's TradingView account.
+
+    This is a *fill*, not a trade: a round trip is at least two of these, and
+    scaling in or out makes it more. Turning a stream of these into round trips
+    is deliberately not done here — see :mod:`shani.ingest.tradingview`.
+
+    ``symbol`` is TradingView's exchange-qualified dated form
+    (``CME_MINI:MESU2026``), ``side`` is ``+1`` buy / ``-1`` sell, and ``time``
+    is an aware UTC datetime converted from TradingView's epoch milliseconds.
+    """
+
+    id: str
+    symbol: str
+    side: int
+    quantity: int
+    price: Decimal
+    time: datetime
+    #: The venue's own commission. Genuinely ``None`` on paper accounts, which
+    #: charge nothing — distinct from "zero", and not to be invented.
+    commission: Decimal | None = None
+
+    @property
+    def is_buy(self) -> bool:
+        return self.side > 0
+
+    @property
+    def signed_quantity(self) -> int:
+        return self.quantity * (1 if self.side > 0 else -1)
+
+
+@dataclass(frozen=True, slots=True)
+class TradingViewOrder:
+    """One order from the Order history tab, filled or not.
+
+    Shani builds trades from executions, not orders. Orders are still worth
+    reading because they carry the trader's *intent* — the bracket legs record
+    the stop and target that were actually working, which is where a trade's
+    planned risk comes from and which no fill can tell you.
+    """
+
+    id: str
+    symbol: str
+    side: int
+    quantity: int
+    order_type: str
+    status: str
+    limit_price: Decimal | None = None
+    stop_price: Decimal | None = None
+    average_price: Decimal | None = None
+    placed_at: datetime | None = None
+    closed_at: datetime | None = None
+
+    @property
+    def is_filled(self) -> bool:
+        return self.status == "filled"
 
 
 # ─── JavaScript evaluated in the TradingView page ────────────────────────────
@@ -265,6 +327,100 @@ _JS_PINE_COMPILE = """
 """ % _JS_FIND_PINE_EDITOR
 
 
+# ─── Trading account: orders and executions ──────────────────────────────────
+#
+# Read through the broker object rather than the Account Manager DOM. That
+# choice matters more than it looks:
+#
+#   * The DOM grid is **virtualised** — only the selected tab is rendered, so a
+#     read while any other tab is up returns nothing at all, and an earlier
+#     attempt to find "the biggest repeating row group" came back with the
+#     *watchlist*. Reading the broker needs no tab to be active and cannot be
+#     broken by the trader clicking somewhere else mid-import.
+#   * The DOM has been through a formatter: "7,801.75" and "2026-08-17 09:50:03"
+#     rendered in the chart's timezone. The broker hands back 7801.75 and epoch
+#     milliseconds. Every thousands separator and timezone guess is a bug that
+#     simply cannot happen if the numbers are never stringified.
+#
+# Verified against TradingView Desktop 3.3.0, Paper Trading account.
+_JS_BROKER = """
+    (() => {
+      const api = window.TradingViewApi;
+      if (!api || typeof api.trading !== 'function') return null;
+      const tr = api.trading();
+      return tr ? tr._activeBroker : null;
+    })()
+"""
+
+#: TradingView's broker enums. Values confirmed against a live account by
+#: cross-checking each code against the status text the Account Manager renders
+#: for the same order id.
+TV_SIDE: dict[int, str] = {1: "buy", -1: "sell"}
+TV_ORDER_TYPE: dict[int, str] = {1: "limit", 2: "market", 3: "stop", 4: "stop_limit"}
+TV_ORDER_STATUS: dict[int, str] = {
+    1: "cancelled", 2: "filled", 3: "inactive",
+    4: "placing", 5: "rejected", 6: "working",
+}
+
+_JS_EXECUTIONS = """
+(async () => {
+  const b = %s;
+  if (!b) return { error: 'No trading account on this page - is the Account Manager open and a broker connected?' };
+  let ex = b.allExecutions();
+  if (ex && typeof ex.then === 'function') ex = await ex;
+  if (!Array.isArray(ex)) return { error: 'allExecutions() did not return a list' };
+  return { executions: ex.map(e => ({
+    id: String(e.id), symbol: e.symbol, price: e.price,
+    qty: e.qty, side: e.side, time: e.time,
+    commission: e.commission == null ? null : e.commission,
+  })) };
+})()
+""" % _JS_BROKER
+
+_JS_ORDER_HISTORY = """
+(async () => {
+  const b = %s;
+  if (!b) return { error: 'No trading account on this page - is the Account Manager open and a broker connected?' };
+  let oh = b.ordersHistory();
+  if (oh && typeof oh.then === 'function') oh = await oh;
+  if (!Array.isArray(oh)) return { error: 'ordersHistory() did not return a list' };
+  return { orders: oh.map(o => ({
+    id: String(o.id), symbol: o.symbol, side: o.side, type: o.type,
+    status: o.status, qty: o.qty,
+    limitPrice: o.limitPrice == null ? null : o.limitPrice,
+    stopPrice: o.stopPrice == null ? null : o.stopPrice,
+    avgPrice: o.avgPrice == null ? null : o.avgPrice,
+    placingTime: (o.extra && o.extra.placingTime) || null,
+    closeDate: (o.extra && o.extra.closeDate) || null,
+  })) };
+})()
+""" % _JS_BROKER
+
+_JS_ACCOUNT = """
+(async () => {
+  const b = %s;
+  if (!b) return { error: 'No trading account on this page' };
+  let acc = b.currentAccount();
+  if (acc && typeof acc.then === 'function') acc = await acc;
+  return { account: acc == null ? null : String(acc) };
+})()
+""" % _JS_BROKER
+
+
+def _dec(value: Any) -> Decimal | None:
+    """TradingView numbers → Decimal, via str so no float error is inherited."""
+    if value is None:
+        return None
+    return Decimal(str(value))
+
+
+def _ts(value: Any) -> datetime | None:
+    """TradingView epoch milliseconds → aware UTC datetime."""
+    if value is None:
+        return None
+    return datetime.fromtimestamp(float(value) / 1000.0, tz=UTC)
+
+
 class TradingViewDesktop:
     """Client for a locally running TradingView Desktop instance."""
 
@@ -419,6 +575,61 @@ class TradingViewDesktop:
         """Recent bars from the active chart — the trader's own data, as shown."""
         raw = await self.evaluate(_JS_OHLCV % max(1, min(count, 5000)))
         return list(raw.get("bars") or [])
+
+    # ── trading account ──────────────────────────────────────────────────────
+
+    async def account_id(self) -> str | None:
+        """The connected broker account's id, used to namespace external ids."""
+        raw = await self.evaluate(_JS_ACCOUNT)
+        return raw.get("account") if raw else None
+
+    async def executions(self) -> list[TradingViewExecution]:
+        """Every fill the connected broker account has recorded.
+
+        Returned oldest-first, because the pairing that turns fills into round
+        trips is order-dependent and TradingView hands them back newest-first.
+        Sorting here means no caller can forget to.
+        """
+        raw = await self.evaluate(_JS_EXECUTIONS)
+        out = [
+            TradingViewExecution(
+                id=str(e["id"]),
+                symbol=str(e["symbol"]),
+                side=1 if int(e["side"]) > 0 else -1,
+                quantity=int(e["qty"]),
+                price=Decimal(str(e["price"])),
+                time=_ts(e["time"]) or datetime.now(UTC),
+                commission=_dec(e.get("commission")),
+            )
+            for e in raw.get("executions") or []
+        ]
+        out.sort(key=lambda e: (e.time, e.id))
+        return out
+
+    async def order_history(self) -> list[TradingViewOrder]:
+        """Every order in the Order history tab, filled or not."""
+        raw = await self.evaluate(_JS_ORDER_HISTORY)
+        out = [
+            TradingViewOrder(
+                id=str(o["id"]),
+                symbol=str(o["symbol"]),
+                side=1 if int(o["side"]) > 0 else -1,
+                quantity=int(o["qty"]),
+                # An unrecognised code passes through as "unknown/<n>" rather
+                # than raising: a new TradingView status must not abort an
+                # import of trades that parsed perfectly well.
+                order_type=TV_ORDER_TYPE.get(int(o["type"]), f"unknown/{o['type']}"),
+                status=TV_ORDER_STATUS.get(int(o["status"]), f"unknown/{o['status']}"),
+                limit_price=_dec(o.get("limitPrice")),
+                stop_price=_dec(o.get("stopPrice")),
+                average_price=_dec(o.get("avgPrice")),
+                placed_at=_ts(o.get("placingTime")),
+                closed_at=_ts(o.get("closeDate")),
+            )
+            for o in raw.get("orders") or []
+        ]
+        out.sort(key=lambda o: (o.placed_at or datetime.min.replace(tzinfo=UTC), o.id))
+        return out
 
     # ── screenshots ──────────────────────────────────────────────────────────
 
