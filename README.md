@@ -93,6 +93,7 @@ finished and returned empty panels.
 | Plane C — Pine alert webhooks | ⚠️ | HMAC + parsing tested locally; **no real alert from TradingView's servers yet** |
 | Portal — price charts, ticket, stats | ✅ | Driven in a browser; contract-tested against the API |
 | Price/OHLCV charts | ✅ | Live data, multiple symbols and timeframes |
+| Importing TradingView trades | 🔬 | **Verified feasible, not built** — see [the spike](docs/tradingview-trade-import.md) |
 | NinjaTrader execution | 📋 | Documented stub. Not implemented |
 | Live broker execution | 🔒 | Disabled by design, and structurally unreachable |
 | Mobile companion app | 📋 | Schema and API shaped for it; app not built |
