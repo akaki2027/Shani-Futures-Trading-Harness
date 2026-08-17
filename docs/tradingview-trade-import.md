@@ -10,9 +10,9 @@ finished importer diverged from the plan below, the plan was wrong:
   and `.ordersHistory()` return structured objects with real numbers and epoch
   milliseconds, need no tab to be active, and make the virtualised-grid problem
   and every timezone question disappear.
-- **Pairing must be per symbol.** The first attempt ran one position across all
-  five symbols in the account and produced a -$346,879 round trip without
-  raising anything. See `HANDOFF.md`.
+- **Pairing must be per symbol.** The first attempt ran one position across
+  every symbol in the account and produced round trips wrong by orders of
+  magnitude, without raising anything. See `HANDOFF.md`.
 - **Correctness was established by reconciliation**, not by tests: total imported
   P&L reproduces TradingView's own realized P&L for the account to the cent.
 

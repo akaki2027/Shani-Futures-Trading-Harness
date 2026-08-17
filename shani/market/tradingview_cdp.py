@@ -340,8 +340,8 @@ _JS_PINE_COMPILE = """
 #     *watchlist*. Reading the broker needs no tab to be active and cannot be
 #     broken by the trader clicking somewhere else mid-import.
 #   * The DOM has been through a formatter: "7,801.75" and "2026-08-17 09:50:03"
-#     rendered in the chart's timezone. The broker hands back 7801.75 and epoch
-#     milliseconds. Every thousands separator and timezone guess is a bug that
+#     rendered in the chart's timezone. The broker hands back a plain number and
+#     epoch milliseconds. Every thousands separator and timezone guess is a bug that
 #     simply cannot happen if the numbers are never stringified.
 #
 # Verified against TradingView Desktop 3.3.0, Paper Trading account.

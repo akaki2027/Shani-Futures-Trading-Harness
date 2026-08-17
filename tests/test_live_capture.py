@@ -59,7 +59,7 @@ class FakeDesktop:
         return list(self.orders)
 
     async def account_id(self) -> str:
-        return "34862113"
+        return "ACCOUNT-1"
 
     async def screenshot(self) -> bytes:
         self.screenshots_taken += 1
@@ -99,7 +99,7 @@ def setup(tmp_path: Path) -> tuple[LiveCapture, FakeDesktop, Database]:
 @pytest.mark.asyncio
 async def test_a_closing_fill_produces_one_trade(setup: Any) -> None:
     capture, desktop, db = setup
-    entry, exit_ = ex(0, 1, 10, "7794.75", "e1"), ex(600, -1, 10, "7801.25", "e2")
+    entry, exit_ = ex(0, 1, 10, "7694.75", "e1"), ex(600, -1, 10, "7701.25", "e2")
 
     desktop.fills = [entry]
     assert await capture.on_fill(entry) == []          # opening a position closes nothing
@@ -123,7 +123,7 @@ async def test_the_same_fill_delivered_twice_does_not_double_the_trade(setup: An
     may produce a second round trip.
     """
     capture, desktop, db = setup
-    entry, exit_ = ex(0, 1, 10, "7794.75", "e1"), ex(600, -1, 10, "7801.25", "e2")
+    entry, exit_ = ex(0, 1, 10, "7694.75", "e1"), ex(600, -1, 10, "7701.25", "e2")
     desktop.fills = [entry, exit_]
 
     first = await capture.on_fill(exit_)
@@ -145,8 +145,8 @@ async def test_priming_on_a_fresh_database_does_not_replay_all_of_history(
     is closed, so the first fill re-reads the account, finds every historical
     round trip absent from the seen-set, and reports all of them as having just
     closed — an interview and a desktop notification for each, about trades from
-    weeks ago, on the very first run. Observed against the real account: 26
-    trades announced at once.
+    weeks ago, on the very first run. Seen for real the first time this ran
+    against a live account: the entire history announced in one burst.
 
     Priming must therefore import the venue's history and take that as the
     starting line.
@@ -154,8 +154,8 @@ async def test_priming_on_a_fresh_database_does_not_replay_all_of_history(
     db = Database(tmp_path / "live.db")
     desktop = FakeDesktop()
     history = [
-        ex(0, 1, 10, "7794.75", "e1"), ex(600, -1, 10, "7801.25", "e2"),
-        ex(1200, -1, 10, "7805", "e3"), ex(1800, 1, 10, "7800", "e4"),
+        ex(0, 1, 10, "7694.75", "e1"), ex(600, -1, 10, "7701.25", "e2"),
+        ex(1200, -1, 10, "7705", "e3"), ex(1800, 1, 10, "7700", "e4"),
     ]
     desktop.fills = list(history)
 
@@ -165,13 +165,13 @@ async def test_priming_on_a_fresh_database_does_not_replay_all_of_history(
     assert db.trades.count() == 2, "priming should have imported the history"
 
     # A new fill arrives. Only what it closes may be announced.
-    new_entry = ex(3600, 1, 10, "7810", "e5")
+    new_entry = ex(3600, 1, 10, "7710", "e5")
     desktop.fills = [*history, new_entry]
     assert await capture.on_fill(new_entry) == [], (
         "historical trades were announced as newly closed"
     )
 
-    new_exit = ex(4200, -1, 10, "7815", "e6")
+    new_exit = ex(4200, -1, 10, "7715", "e6")
     desktop.fills = [*history, new_entry, new_exit]
     closed = await capture.on_fill(new_exit)
     assert len(closed) == 1, "the genuinely new round trip was not announced"
@@ -183,7 +183,7 @@ async def test_priming_on_a_fresh_database_does_not_replay_all_of_history(
 async def test_the_chart_is_captured_at_the_fill(setup: Any) -> None:
     """The screenshot is the only thing a later import cannot reconstruct."""
     capture, desktop, db = setup
-    entry = ex(0, 1, 10, "7794.75", "e1")
+    entry = ex(0, 1, 10, "7694.75", "e1")
     desktop.fills = [entry]
     await capture.on_fill(entry)
 
@@ -212,7 +212,7 @@ async def test_a_failed_screenshot_does_not_lose_the_trade(setup: Any) -> None:
         raise TradingViewUnavailableError("window is minimised")
 
     desktop.screenshot = broken  # type: ignore[method-assign]
-    entry, exit_ = ex(0, 1, 10, "7794.75", "e1"), ex(600, -1, 10, "7801.25", "e2")
+    entry, exit_ = ex(0, 1, 10, "7694.75", "e1"), ex(600, -1, 10, "7701.25", "e2")
     desktop.fills = [entry, exit_]
 
     closed = await capture.on_fill(exit_)
@@ -232,11 +232,11 @@ async def test_live_and_import_agree_on_the_trade(setup: Any) -> None:
     from shani.ingest.tradingview import build_trades
 
     capture, desktop, db = setup
-    entry, exit_ = ex(0, 1, 10, "7794.75", "e1"), ex(600, -1, 10, "7801.25", "e2")
+    entry, exit_ = ex(0, 1, 10, "7694.75", "e1"), ex(600, -1, 10, "7701.25", "e2")
     desktop.fills = [entry, exit_]
     live = (await capture.on_fill(exit_))[0]
 
-    imported = build_trades([entry, exit_], account="34862113").trades[0]
+    imported = build_trades([entry, exit_], account="ACCOUNT-1").trades[0]
     assert imported.id == live.id
     assert imported.external_id == live.external_id
     db.close()
@@ -245,7 +245,7 @@ async def test_live_and_import_agree_on_the_trade(setup: Any) -> None:
 @pytest.mark.asyncio
 async def test_a_fill_is_recorded_in_the_audit_log(setup: Any) -> None:
     capture, desktop, db = setup
-    entry = ex(0, 1, 10, "7794.75", "e1")
+    entry = ex(0, 1, 10, "7694.75", "e1")
     desktop.fills = [entry]
     await capture.on_fill(entry)
 

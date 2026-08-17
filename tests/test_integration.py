@@ -459,7 +459,7 @@ class TestTradingViewImportIsIdempotent:
         from shani.market.tradingview_cdp import TradingViewExecution
 
         base = datetime(2026, 8, 12, 15, 0, tzinfo=UTC)
-        prices = [("7764", 1), ("7772.25", -1), ("7805", 1), ("7803.25", -1)]
+        prices = [("7664", 1), ("7672.25", -1), ("7705", 1), ("7703.25", -1)]
         return [
             TradingViewExecution(
                 id=f"e{i}", symbol="CME_MINI:MESU2026", side=side, quantity=10,
@@ -475,12 +475,12 @@ class TestTradingViewImportIsIdempotent:
         db = Database(tmp_path / "import.db")
         fills = self._fills()
 
-        first = build_trades(fills, account="34862113")
+        first = build_trades(fills, account="ACCOUNT-1")
         inserted, updated = save_trades(db, first)
         assert (inserted, updated) == (2, 0)
         assert db.trades.count() == 2
 
-        second = build_trades(fills, account="34862113")
+        second = build_trades(fills, account="ACCOUNT-1")
         inserted, updated = save_trades(db, second)
         assert (inserted, updated) == (0, 2), "re-import inserted instead of updating"
         assert db.trades.count() == 2, "the trade table doubled on re-import"
@@ -500,7 +500,7 @@ class TestTradingViewImportIsIdempotent:
 
         db = Database(tmp_path / "import.db")
         fills = self._fills()
-        save_trades(db, build_trades(fills, account="34862113"))
+        save_trades(db, build_trades(fills, account="ACCOUNT-1"))
 
         trade = db.trades.all()[0]
         trade.interview = [
@@ -510,7 +510,7 @@ class TestTradingViewImportIsIdempotent:
         trade.tags = ["reclaim"]
         db.trades.save(trade)
 
-        save_trades(db, build_trades(fills, account="34862113"))
+        save_trades(db, build_trades(fills, account="ACCOUNT-1"))
 
         after = db.trades.get(trade.id)
         assert after is not None
@@ -530,21 +530,21 @@ class TestTradingViewImportIsIdempotent:
 
         db = Database(tmp_path / "import.db")
         fills = self._fills()
-        save_trades(db, build_trades(fills, account="34862113"))
+        save_trades(db, build_trades(fills, account="ACCOUNT-1"))
         original_ids = {t.id for t in db.trades.all()}
 
         later = fills[-1].time + timedelta(hours=1)
         fills += [
             TradingViewExecution(
                 id="e98", symbol="CME_MINI:MESU2026", side=-1, quantity=10,
-                price=Decimal("7807"), time=later,
+                price=Decimal("7707"), time=later,
             ),
             TradingViewExecution(
                 id="e99", symbol="CME_MINI:MESU2026", side=1, quantity=10,
-                price=Decimal("7801.75"), time=later + timedelta(minutes=20),
+                price=Decimal("7701.75"), time=later + timedelta(minutes=20),
             ),
         ]
-        inserted, updated = save_trades(db, build_trades(fills, account="34862113"))
+        inserted, updated = save_trades(db, build_trades(fills, account="ACCOUNT-1"))
         assert (inserted, updated) == (1, 2)
         assert db.trades.count() == 3
         assert original_ids < {t.id for t in db.trades.all()}
@@ -603,16 +603,16 @@ class TestImportEndpoint:
         fills = [
             TradingViewExecution(
                 id="e0", symbol="CME_MINI:MESU2026", side=1, quantity=10,
-                price=Decimal("7764"), time=base,
+                price=Decimal("7664"), time=base,
             ),
             TradingViewExecution(
                 id="e1", symbol="CME_MINI:MESU2026", side=-1, quantity=10,
-                price=Decimal("7772.25"), time=base + timedelta(minutes=20),
+                price=Decimal("7672.25"), time=base + timedelta(minutes=20),
             ),
         ]
 
         async def account(self: Any) -> str:
-            return "34862113"
+            return "ACCOUNT-1"
 
         async def executions(self: Any) -> Any:
             return fills

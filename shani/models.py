@@ -403,7 +403,7 @@ class Trade(SyncRecord):
     broker: str = "paper"
 
     #: Stable identity of this round trip at the venue it was imported from,
-    #: e.g. ``"tradingview:34862113:CME_MINI:MESU2026:2479343643"``. Null for
+    #: e.g. ``"tradingview:ACCOUNT-1:CME_MINI:MESU2026:2479343643"``. Null for
     #: trades Shani executed itself.
     #:
     #: Import re-reads the *whole* history every time, so this is what stops a

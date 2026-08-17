@@ -21,19 +21,20 @@ size-weighted average entry and exit prices, which is how the trade is actually
 remembered and the only way an interview about it makes sense.
 
 **Pairing is per symbol, and getting that wrong is not a subtle failure.** The
-first implementation pooled every fill into a single running position; the
-account held MES at ~7,700, MNQ at ~29,000 and SPY at ~765, so positions never
-closed against their own instrument and it produced round trips with entries of
-4,234.945 and a P&L of -$346,879 on an account that had made $4,722.78. Prices
-from two instruments must never meet in the same subtraction.
+first implementation pooled every fill into a single running position. An account
+holding MES near 7,700, MNQ near 29,000 and SPY near 765 then never closes a
+position against its own instrument, and the result was round trips wrong by
+orders of magnitude — a six-figure phantom loss on an account that was up four
+figures — with no exception raised anywhere. Prices from two instruments must
+never meet in the same subtraction.
 
 ## Why this is trustworthy
 
-The algorithm was not accepted because it looked right. It was run against the
-real account and its total realized P&L reproduced the figure TradingView shows
-for that account — **$4,722.78** — to the cent, across 25 round trips in 5
-symbols. :func:`realized_pnl` exists so that check stays runnable, and
-``tests/test_integration.py`` pins it.
+The algorithm was not accepted because it looked right. It was run against a
+live account and its total realized P&L reproduced the figure the broker reports
+for that account, to the cent, across every round trip in five symbols.
+:func:`realized_pnl` exists so that check stays runnable against your own
+account — it is the one worth repeating after any change to the pairing.
 
 ## Reconciliation
 

@@ -3,8 +3,7 @@
 Written at the end of the first build session. This is the state of things and
 what to do next, so a fresh session can start working rather than rediscovering.
 
-**Owner:** akaki2027 · **Repo:** <https://github.com/akaki2027/Shani-Futures-Trading-Harness>
-(public) · **Trades:** futures, mainly MES/ES
+**Repo:** <https://github.com/akaki2027/Shani-Futures-Trading-Harness> (public)
 
 The repository is public, which is a standing constraint rather than a fact
 about one day. Anything that works only because of the author's local state —
@@ -35,8 +34,8 @@ Verified by running it, not just by tests passing.
 | Portal | Next.js, dark, tabular figures, themed browser surfaces |
 | Trade import | **Built and run.** `shani import` reads the TradingView account and writes round trips. Reconciled to the cent against the account's own realized P&L |
 | Live fill capture | **Built and run.** `shani watch` streams fills over CDP, screenshots the chart at the fill, and opens the interview when a round trip closes |
-| The journal | **Real trades only.** The 60 demo rows and 6 `shani verify` artefacts were deleted on 2026-08-17; what remains is the imported history. Stats are honest |
-| Verification | `shani doctor` (components) and `shani verify` (seams). 390 tests, ruff + mypy strict clean |
+| The journal | **Real trades only.** The seeded demo rows and `shani verify` artefacts were cleared with `shani demo --clear`; what remains is imported history. Stats are honest |
+| Verification | `shani doctor` (components) and `shani verify` (seams). 406 tests, ruff + mypy strict clean |
 
 Run it:
 
@@ -70,8 +69,9 @@ Stated plainly so nobody rediscovers it as a surprise.
 `shani import` — add `--dry-run` to see it without writing. Also
 `POST /api/trades/import`.
 
-Against the owner's account it reads 56 fills and 97 orders, produces 25 round
-trips, and skips 2 (see below).
+Against a live account it reads the full fill and order history, produces one
+round trip per flat-to-flat position, and skips anything it has no contract spec
+for (see below).
 
 ### Do not go back to the DOM
 
@@ -80,19 +80,20 @@ scrape the grid. **That works but is the wrong door.** `_activeBroker` exposes
 `allExecutions()`, `ordersHistory()` and `currentAccount()`, which return
 structured objects — real numbers, epoch milliseconds, stable ids — and need no
 tab to be active at all. The virtualised-grid problem simply does not arise, and
-neither does parsing `"7,801.75"` or guessing which timezone
-`"2026-08-17 09:50:03"` was rendered in. A seam test now fails if any of those
+neither does parsing a thousands-separated price string or guessing which
+timezone a rendered timestamp was in. A seam test now fails if any of those
 expressions reaches for `querySelector`.
 
-The DOM was still worth reading once: its tab counts (All 97, Filled 56,
-Cancelled 40, Rejected 1) are what confirmed the numeric status codes.
+The DOM was still worth reading once: the per-status counts on its tabs are what
+confirmed the numeric status codes, by cross-checking them against the counts the
+broker object reports.
 
 ### The bug that mattered
 
 The first pairing implementation ran **one position across every symbol**. The
-account holds MES near 7,700, MNQ near 29,000, SPY near 765 — so positions never
-closed against their own instrument, and it produced round trips with an entry
-of 4,234.945 and a P&L of **-$346,879** on an account that had made $4,722.78.
+account held several instruments at very different price levels — so positions never
+closed against their own instrument, and it produced round trips wrong by orders
+of magnitude — a six-figure phantom loss on an account that was up four figures.
 Nothing threw. Pair per symbol; prices from two instruments must never meet in
 the same subtraction. `test_symbols_are_paired_independently` pins it.
 
@@ -100,11 +101,11 @@ the same subtraction. `test_symbols_are_paired_independently` pins it.
 
 Not by the tests passing. The algorithm was run against the real account and its
 total realized P&L reproduced TradingView's own figure for that account —
-**$4,722.78** — exactly, across 25 round trips in 5 symbols. That is the check
-worth repeating after any change to the pairing.
+exactly, across every round trip in five symbols. That is the check worth
+repeating after any change to the pairing — run it against your own account.
 
-Then imported twice: `25 new, 0 updated` followed by `0 new, 25 updated`, with
-all 66 pre-existing interviews intact.
+Then imported twice: every trade new on the first run, every trade *updated* and
+none inserted on the second, with all pre-existing interviews intact.
 
 ### Decisions worth knowing before changing it
 
@@ -121,15 +122,15 @@ all 66 pre-existing interviews intact.
 - **Commission is `None`, not zero.** The paper account charges nothing.
   Synthesising a plausible commission would make imported P&L disagree with the
   number TradingView shows the owner.
-- **SPY and SPXX are skipped, loudly.** Shani prices futures from a contract spec
-  and will not invent a multiplier. Consequence: imported P&L is $4,717.50, short
-  of the account's $4,722.78 by exactly the equities. That gap is expected, and
-  the CLI says so rather than letting it look like a discrepancy.
-- **Brackets are matched heuristically, and decline when ambiguous.** 20 of 25
-  trades get a stop and therefore an R. The other 5 are genuine: two had no
-  bracket at all, three were fired within six minutes at nearly identical prices
-  with overlapping brackets. An unknown R is `None` and is excluded from
-  statistics; a guessed one would be averaged in as fact.
+- **Equities are skipped, loudly.** Shani prices futures from a contract spec and
+  will not invent a multiplier. Consequence: imported P&L falls short of the
+  account's own figure by exactly the skipped rows. That gap is expected, and the
+  CLI says so rather than letting it look like a discrepancy.
+- **Brackets are matched heuristically, and decline when ambiguous.** Most trades
+  resolve a stop and therefore an R. The rest are genuine misses: some entries
+  carried no bracket at all, and rapid sequences at nearly identical prices have
+  overlapping brackets that cannot be attributed. An unknown R is `None` and is
+  excluded from statistics; a guessed one would be averaged in as fact.
 
 ---
 
@@ -171,8 +172,8 @@ so no fill can fall between two polls.
   two implementations of the pairing and one silent day where they differ.
 - **Priming must import first.** On a fresh database nothing is closed, so the
   first fill re-reads the account and reports the entire history as having just
-  closed. Observed live: 26 trades announced at once, each with an interview and
-  a notification. `prime()` now imports and takes that as the starting line.
+  closed — every historical trade at once, each with an interview and a
+  notification. `prime()` now imports and takes that as the starting line.
 - **The hook dies on page reload.** `watch_executions` reinstalls on
   `Runtime.executionContextCreated`; without it a trader hitting refresh silently
   stops the capture and the first sign is a missing trade.
