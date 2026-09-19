@@ -143,7 +143,7 @@ Full setup: **[docs/tradingview-setup.md](docs/tradingview-setup.md)**
 Requires **Python 3.11+** and **Node 20+**.
 
 ```bash
-git clone https://github.com/akaki2027/shani.git
+git clone https://github.com/akaki2027/Shani-Futures-Trading-Harness.git shani
 cd shani
 uv sync
 uv run shani init

@@ -81,9 +81,9 @@ all = ["anthropic>=0.40", "openai>=1.55"]
 shani = "shani.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/akaki2027/shani"
-Repository = "https://github.com/akaki2027/shani"
-Issues = "https://github.com/akaki2027/shani/issues"
+Homepage = "https://github.com/akaki2027/Shani-Futures-Trading-Harness"
+Repository = "https://github.com/akaki2027/Shani-Futures-Trading-Harness"
+Issues = "https://github.com/akaki2027/Shani-Futures-Trading-Harness/issues"
 
 [build-system]
 requires = ["hatchling"]
