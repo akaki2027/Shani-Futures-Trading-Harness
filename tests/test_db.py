@@ -238,11 +238,24 @@ class TestSyncSupport:
     def test_changed_since_returns_only_newer_records(self, db: Database) -> None:
         old = make_trade()
         db.trades.save(old)
-        checkpoint = datetime.now(UTC)
+        # Checkpoint off the record the client last saw, not off a fresh clock
+        # read. On a coarse clock (Windows ticks ~15.6 ms) a wall-clock reading
+        # can tie with the write either side of it, which is a property of the
+        # test rather than of the sync.
+        checkpoint = old.updated_at
         new = make_trade(symbol="NQ")
         db.trades.save(new)
         changed = db.trades.changed_since(checkpoint)
         assert [t.id for t in changed] == [new.id]
+
+    def test_timestamps_advance_even_within_one_clock_tick(self, db: Database) -> None:
+        """Two saves inside one tick must still be ordered, or sync loses one."""
+        first = make_trade()
+        second = make_trade(symbol="NQ")
+        db.trades.save(first)
+        db.trades.save(second)
+        assert second.updated_at > first.updated_at
+        assert db.trades.changed_since(first.updated_at) == [second]
 
     def test_database_wide_delta_covers_every_entity(self, db: Database) -> None:
         before = datetime.now(UTC) - timedelta(seconds=1)

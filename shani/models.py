@@ -23,9 +23,10 @@ the thing an ordinary trade log throws away.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from enum import Enum
+from threading import Lock
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
@@ -55,8 +56,27 @@ Money = Annotated[Decimal, Field(description="USD, exact")]
 Price = Annotated[Decimal, Field(description="Instrument price, must sit on a tick")]
 
 
+_CLOCK_LOCK = Lock()
+_LAST_NOW = datetime.min.replace(tzinfo=UTC)
+
+
 def _now() -> datetime:
-    return datetime.now(UTC)
+    """UTC now, guaranteed to strictly increase within this process.
+
+    ``updated_at`` drives ``changed_since``, which selects ``updated_at > ?``.
+    A plain ``datetime.now`` is not fine-grained enough for that: Windows ticks
+    roughly every 15.6 ms, so two records saved in the same tick share a
+    timestamp and the second is invisible to a sync that checkpointed at the
+    first. Advancing by a microsecond whenever the clock has not moved keeps
+    every record strictly ordered, which is what the delta query assumes.
+    """
+    global _LAST_NOW
+    with _CLOCK_LOCK:
+        now = datetime.now(UTC)
+        if now <= _LAST_NOW:
+            now = _LAST_NOW + timedelta(microseconds=1)
+        _LAST_NOW = now
+        return now
 
 
 class SyncRecord(BaseModel):

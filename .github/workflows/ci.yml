@@ -14,6 +14,9 @@ jobs:
   python:
     name: python ${{ matrix.python }} · ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    # Without this a stuck step runs to GitHub's six-hour default. macOS bills
+    # at ten times the Linux rate, so a hang there is expensive as well as slow.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -49,6 +52,7 @@ jobs:
   portal:
     name: portal
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: portal
@@ -69,6 +73,7 @@ jobs:
   secrets:
     name: secret scan
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:

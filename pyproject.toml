@@ -112,6 +112,13 @@ testpaths = ["tests"]
 # a running TradingView Desktop are opt-in only, so CI is deterministic and a
 # fresh clone can run the suite on a plane.
 addopts = "-m 'not network and not desktop' --strict-markers"
+# A hung test used to sit until the job's six-hour ceiling with no output. This
+# dumps every thread's stack and exits once a single test passes two minutes,
+# so a hang arrives as a traceback instead of an expired runner.
+faulthandler_timeout = 120
+# Dumping alone is not enough: without this the run continues to the job
+# ceiling after printing the stacks.
+faulthandler_exit_on_timeout = true
 markers = [
     "network: hits live upstream market data (not run in CI)",
     "desktop: requires TradingView Desktop with --remote-debugging-port (not run in CI)",
