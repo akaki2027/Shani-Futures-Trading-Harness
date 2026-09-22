@@ -13,16 +13,27 @@ Failures here are always swallowed. A notification backend that cannot start —
 missing WinRT bindings, no D-Bus session, a headless server — must never take
 down the trading loop. Losing a toast is a minor annoyance; crashing the process
 that is tracking an open position is not.
+
+A backend that never answers is the same hazard wearing different clothes, and
+it does not raise, so swallowing exceptions alone does not cover it. On a
+headless macOS runner the notification centre accepts the call and never
+returns, which wedged CI until the job's six-hour ceiling. Every send is
+therefore bounded by SEND_TIMEOUT and a timeout counts as a failed toast.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from decimal import Decimal
 
 from shani.models import Trade
 
 __all__ = ["Notifier"]
+
+# Generous for a real desktop, where a toast is near-instant, and short enough
+# that a wedged backend cannot hold an order request open.
+SEND_TIMEOUT = 5.0
 
 log = logging.getLogger(__name__)
 
@@ -58,11 +69,20 @@ class Notifier:
         try:
             from desktop_notifier import Urgency
 
-            await backend.send(  # type: ignore[attr-defined]
-                title=title,
-                message=message,
-                urgency=Urgency.Critical if urgent else Urgency.Normal,
+            await asyncio.wait_for(
+                backend.send(  # type: ignore[attr-defined]
+                    title=title,
+                    message=message,
+                    urgency=Urgency.Critical if urgent else Urgency.Normal,
+                ),
+                timeout=SEND_TIMEOUT,
             )
+        except TimeoutError:
+            # Do not retry: a backend that hung once will hang again, and this
+            # sits on the request path of an order being refused.
+            log.debug("Notification timed out after %.0fs; backend disabled", SEND_TIMEOUT)
+            self._unavailable = True
+            return False
         except Exception as exc:
             log.debug("Notification failed: %s", exc)
             return False
